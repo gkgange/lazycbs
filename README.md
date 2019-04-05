@@ -2,12 +2,15 @@
 
 ## Dependencies:
  + [geas](https://bitbucket.org/gkgange/geas)
-   > A lazy clause generation-based constraint programming solver.
+ 
+     A lazy clause generation-based constraint programming solver.
+     
      For Lazy CBS, only the C++ library and headers are necessary;
      it is not necessary to build the ML interface for flatzinc wrapper.
 
- + ECBS 
-   > The single-agent pathfinder for Lazy CBS is built on a modified version
+ + ECBS
+ 
+     The single-agent pathfinder for Lazy CBS is built on a modified version
      of ECBS. Source is available as a tarball under Downloads.
 
      Building ECBS requires the Boost program options and graph libraries.
@@ -16,7 +19,7 @@
   + First, build `libgeas.a` and `libecbs.a` from their respective code bases.
   + In the Makefile, set `GEAS_ROOT` and `ECBS_ROOT` to the location of `geas`
     and `ecbs` respectively.
-  + Call `make`.
+  + Call `make`, which will build a binary lazy-cbs.
 
 ## Acknowledgements
   Many thanks to Liron Cohen, for providing the source to ECBS.
