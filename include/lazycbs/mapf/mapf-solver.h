@@ -141,7 +141,9 @@ class MAPF_Solver {
   vec< vec<barrier_data> > barriers;
   std::unordered_map<cons_key, int, cons_key_hasher, cons_key_eq> cons_map;
   std::unordered_map<barrier_key, int, barrier_key_hasher, barrier_key_eq> barrier_map;
-  conflict new_conflict;
+  // conflict new_conflict;
+  vec<conflict> new_conflicts;
+  p_sparseset agent_set;
 
   // For unsat-core reasoning
   vec<penalty> penalties;

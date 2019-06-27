@@ -4,8 +4,8 @@
 
 #include "compute_heuristic.h"
 
-// #define DEBUG_UC
-#define MAPF_NO_RECTANGLES
+#define DEBUG_UC
+// #define MAPF_NO_RECTANGLES
 
 namespace mapf {
 
@@ -16,6 +16,7 @@ static std::pair<int, bool*> mapf_get_res_table(MAPF_Solver* m, int excl) {
 MAPF_Solver::MAPF_Solver(const MapLoader& _ml, const AgentsLoader& _al, const EgraphReader& _egr, int UB)
   : ml(&_ml), al(&_al), egr(&_egr), map_size(ml->rows * ml->cols)
   , reservation_table(map_size, false), cmap(map_size, -1), nmap(map_size, -1)
+  , agent_set(al->num_of_agents)
   , cost_ub(UB)
   , HL_conflicts(0) {
 
@@ -93,6 +94,27 @@ bool apply_makespan(MAPF_Solver& mf, int lb) {
 }
 */
 
+void log_conflict(MAPF_Solver& mapf) {
+  for(auto new_conflict : mapf.new_conflicts) {
+    int a1(new_conflict.a1);
+    int a2(new_conflict.a2);
+    int t(new_conflict.timestamp);
+
+    if(new_conflict.type == MAPF_Solver::C_BARRIER) {
+      fprintf(stderr, "%%%% Adding rectangle: [%d, (%d, %d) |- (%d, %d), %d, %d]\n",
+        t, mapf.row_of(new_conflict.b.s_loc), mapf.col_of(new_conflict.b.s_loc),
+           mapf.row_of(new_conflict.b.e_loc), mapf.col_of(new_conflict.b.e_loc),
+           a1, a2);
+    } else {
+      fprintf(stderr, "%%%% Adding conflict: [%d, (%d, %d), %d, %d, %d | (%d, %d -> %d, %d) | (%d, %d -> %d, %d) ]\n", new_conflict.timestamp, new_conflict.p.loc1 / mapf.ml->cols, new_conflict.p.loc1 % mapf.ml->cols, new_conflict.p.loc2, new_conflict.a1, new_conflict.a2,
+        mapf.pathfinders[new_conflict.a1]->start_pos / mapf.ml->cols, mapf.pathfinders[new_conflict.a1]->start_pos % mapf.ml->cols,
+        mapf.pathfinders[new_conflict.a1]->goal_pos / mapf.ml->cols, mapf.pathfinders[new_conflict.a1]->goal_pos % mapf.ml->cols,
+        mapf.pathfinders[new_conflict.a2]->start_pos / mapf.ml->cols, mapf.pathfinders[new_conflict.a2]->start_pos % mapf.ml->cols,
+        mapf.pathfinders[new_conflict.a2]->goal_pos / mapf.ml->cols, mapf.pathfinders[new_conflict.a2]->goal_pos % mapf.ml->cols);
+    }
+  }
+}
+
 bool MAPF_Solver::buildPlan(vec<geas::patom_t>& assumps) {
   s.clear_assumptions();  
   
@@ -114,6 +136,9 @@ retry:
       // First, finesse the plan to avoid any remaining conflicts.
       if(!resolveConflicts()) {
         s.restart();
+#ifdef DEBUG_UC
+        log_conflict(*this);
+#endif
         if(!addConflict())
           return false;
         goto retry;
@@ -126,6 +151,7 @@ retry:
   // Should be unreachable
   GEAS_ERROR;
 }
+
 
 bool MAPF_Solver::minimizeCost(void) {
   s.clear_assumptions();
@@ -144,22 +170,7 @@ bool MAPF_Solver::minimizeCost(void) {
     return false;
   while(checkForConflicts()) {
 #ifdef DEBUG_UC
-    int a1(new_conflict.a1);
-    int a2(new_conflict.a2);
-    int t(new_conflict.timestamp);
-
-    if(new_conflict.type == C_BARRIER) {
-      fprintf(stderr, "%%%% Adding rectangle: [%d, (%d, %d) |- (%d, %d), %d, %d]\n",
-        t, row_of(new_conflict.b.s_loc), col_of(new_conflict.b.s_loc),
-           row_of(new_conflict.b.e_loc), col_of(new_conflict.b.e_loc),
-           a1, a2);
-    } else {
-      fprintf(stderr, "%%%% Adding conflict: [%d, (%d, %d), %d, %d, %d | (%d, %d -> %d, %d) | (%d, %d -> %d, %d) ]\n", new_conflict.timestamp, new_conflict.p.loc1 / ml->cols, new_conflict.p.loc1 % ml->cols, new_conflict.p.loc2, new_conflict.a1, new_conflict.a2,
-        pathfinders[new_conflict.a1]->start_pos / ml->cols, pathfinders[new_conflict.a1]->start_pos % ml->cols,
-        pathfinders[new_conflict.a1]->goal_pos / ml->cols, pathfinders[new_conflict.a1]->goal_pos % ml->cols,
-        pathfinders[new_conflict.a2]->start_pos / ml->cols, pathfinders[new_conflict.a2]->start_pos % ml->cols,
-        pathfinders[new_conflict.a2]->goal_pos / ml->cols, pathfinders[new_conflict.a2]->goal_pos % ml->cols);
-    }
+    log_conflict(*this);
 #endif
     // s.restart();
     if(!addConflict())
@@ -375,6 +386,7 @@ bool MAPF_Solver::resolveConflicts(void) {
   return !checkForConflicts();
 }
 
+#if 0
 bool MAPF_Solver::checkForConflicts(void) {
   int pMax = maxPathLength();
   
@@ -461,12 +473,12 @@ bool MAPF_Solver::checkForConflicts(void) {
           int locE(ml->linearize_coordinate(row_of(eV), col_of(eH)));
           int t0(stH - abs(row_of(sH) - row_of(locS)));
           assert(t0 == stV - abs(col_of(sV) - col_of(locS)));
-          new_conflict = conflict::barrier(t0, ai, aj, locS, locE);
+          new_conflicts.push(conflict::barrier(t0, ai, aj, locS, locE));
         } else {
 #ifdef MAPF_NO_RECTANGLES
         fallback:
 #endif
-          new_conflict = conflict(t, ai, nmap[loc], loc, -1);
+          new_conflicts.push(conflict(t, ai, nmap[loc], loc, -1));
         }
 
         clear_map(this, cmap, t-1);
@@ -479,7 +491,7 @@ bool MAPF_Solver::checkForConflicts(void) {
         int rloc = agentPosition(pathfinders[cmap[loc]], t);
         if(cmap[rloc] == ai) {
           // Edge conflict
-          new_conflict = conflict(t-1, ai, cmap[loc], loc, rloc);
+          new_conflicts.push(conflict(t-1, ai, cmap[loc], loc, rloc));
           clear_map(this, cmap, t-1);
           clear_map(this, nmap, t);
           return true;
@@ -493,6 +505,136 @@ bool MAPF_Solver::checkForConflicts(void) {
 
   return false;
 }
+#else
+// Multiple-conflict handling
+bool MAPF_Solver::checkForConflicts(void) {
+  int pMax = maxPathLength();
+  
+  for(int ai = 0; ai < pathfinders.size(); ++ai) {
+    int loc = pathfinders[ai]->getPath()[0];
+    assert(nmap[loc] < 0); // Shouldn't be any conflicts at t0.
+    nmap[loc] = ai;
+  }
+  // All agents are interesting.
+  agent_set.sz = pathfinders.size();
+
+  for(int t = 1; t < pMax; ++t) {
+    std::swap(cmap, nmap);
+
+    // for(int ai = 0; ai < pathfinders.size(); ++ai) {
+    for(int ai : agent_set.rev()) {
+      int loc = agentPosition(pathfinders[ai], t);
+      if(nmap[loc] >= 0) {
+        // Already occupied.
+        int aj(nmap[loc]);
+        int dy1 = row_of(agentPosition(pathfinders[ai], t)) - row_of(agentPosition(pathfinders[ai], t-1));
+        int dx1 = col_of(agentPosition(pathfinders[ai], t)) - col_of(agentPosition(pathfinders[ai], t-1));
+        int dy2 = row_of(agentPosition(pathfinders[aj], t)) - row_of(agentPosition(pathfinders[aj], t-1));
+        int dx2 = col_of(agentPosition(pathfinders[aj], t)) - col_of(agentPosition(pathfinders[aj], t-1));
+#ifdef MAPF_NO_RECTANGLES
+        goto fallback;
+#endif
+        if(dx1 != dx2 && dy1 != dy2) {
+          // This is a rectangle conflict
+          int dy(dy1 + dy2);
+          int dx(dx1 + dx2);
+          
+          // Make sure ai is the horizontal agent.
+          if(dx2)
+            std::swap(ai, aj);
+
+          // Find the start positions
+          int stH(monotoneSubchainStart(dy, dx, ai, t));
+          int stV(monotoneSubchainStart(dy, dx, aj, t));
+          
+          int sH(agentPosition(pathfinders[ai], stH));
+          int sV(agentPosition(pathfinders[aj], stV));
+
+          // If there is overhang, adjust the locations.
+          while(true) {
+            if(dx * (col_of(sV) - col_of(sH)) < 0) {
+              ++stV;     
+              sV = agentPosition(pathfinders[aj], stV);
+              continue;
+            }
+            if(dy * (row_of(sH) - row_of(sV)) < 0) {
+              ++stH;
+              sH = agentPosition(pathfinders[ai], stH); 
+              continue;
+            }
+            break;
+          }
+
+          int etH(monotoneSubchainEnd(dy, dx, ai, t));
+          int etV(monotoneSubchainEnd(dy, dx, aj, t));
+
+          int eH(agentPosition(pathfinders[ai], etH));
+          int eV(agentPosition(pathfinders[aj], etV));
+
+          while(true) {
+            if(dx * (col_of(eH) - col_of(eV)) < 0) {
+              --etV;
+              eV = agentPosition(pathfinders[aj], etV);
+              continue;
+            }
+            if(dy * (row_of(eV) - row_of(eH)) < 0) {
+              --etH;
+              eH = agentPosition(pathfinders[ai], etH);
+              continue;
+            }
+            break;
+          }
+          assert(stH <= t);
+          assert(stV <= t);
+          assert(t <= etH);
+          assert(t <= etV);
+          assert(dy * (row_of(sH) - row_of(sV)) >= 0);
+          assert(dx * (col_of(sV) - col_of(sH)) >= 0);
+          assert(dy * (row_of(eV) - row_of(eH)) >= 0);
+          assert(dx * (col_of(eH) - col_of(eV)) >= 0);
+           
+          int locS(ml->linearize_coordinate(row_of(sV), col_of(sH)));
+          int locE(ml->linearize_coordinate(row_of(eV), col_of(eH)));
+          int t0(stH - abs(row_of(sH) - row_of(locS)));
+          assert(t0 == stV - abs(col_of(sV) - col_of(locS)));
+          new_conflicts.push(conflict::barrier(t0, ai, aj, locS, locE));
+        } else {
+#ifdef MAPF_NO_RECTANGLES
+        fallback:
+#endif
+          new_conflicts.push(conflict(t, ai, nmap[loc], loc, -1));
+        }
+
+        clear_map(this, cmap, t-1);
+        clear_map(this, nmap, t);
+        agent_set.remove(ai);
+        // return true;
+        continue;
+      }
+      nmap[loc] = ai;
+      if(cmap[loc] > 0 && cmap[loc] != ai) {
+        // Get the new location of the agent we're replacing.
+        int rloc = agentPosition(pathfinders[cmap[loc]], t);
+        if(cmap[rloc] == ai) {
+          // Edge conflict
+          new_conflicts.push(conflict(t-1, ai, cmap[loc], loc, rloc));
+          clear_map(this, cmap, t-1);
+          clear_map(this, nmap, t);
+          agent_set.remove(ai);
+          // return true;
+          continue;
+        }
+      }
+    }
+    // Now we zero out the previous cmap.
+    clear_map(this, cmap, t-1);
+  }
+  clear_map(this, nmap, pMax-1);
+
+  return new_conflicts.size() > 0;
+}
+
+#endif
 
 bool MAPF_Solver::checkBarrierViolated(int ai, int t, int p, int delta, int dur) const {
   assert(t >= 0);
@@ -581,139 +723,142 @@ geas::patom_t MAPF_Solver::getBarrier(int ai, BarrierDir dir, int t, int p, int 
 
 bool MAPF_Solver::addConflict(void) {
   HL_conflicts++;
-  if(new_conflict.type == C_BARRIER) {
-    int aH(new_conflict.a1);
-    int aV(new_conflict.a2);
-    int p_s(new_conflict.b.s_loc);
-    int p_e(new_conflict.b.e_loc);
+  for(auto new_conflict : new_conflicts) {
+    if(new_conflict.type == C_BARRIER) {
+      int aH(new_conflict.a1);
+      int aV(new_conflict.a2);
+      int p_s(new_conflict.b.s_loc);
+      int p_e(new_conflict.b.e_loc);
 
-    vec<geas::clause_elt> barrier_atoms;
-
-    // Entry barrier starts at top-left
-    int s_time(new_conflict.timestamp);
-    // fprintf(stderr, "%% Adding rectangle [%d] (%d, %d) -> (%d, %d)\n", s_time, row_of(p_s), col_of(p_s), row_of(p_e), col_of(p_e));
-    int dt(std::min(0, s_time));
-    int h_dur(1 + abs(row_of(p_e) - row_of(p_s)));
-    int h_delta(row_of(p_s) < row_of(p_e) ? ml->cols : -ml->cols);
-    
-    // assert(checkBarrierViolated(aH, s_time - dt, p_s - dt*h_delta, h_delta, h_dur + dt));
-    BarrierDir dH(row_of(p_s) < row_of(p_e) ? DOWN : UP);
-    if(s_time > 0 || pathfinders[aH]->engine.start_location != p_s - dt*h_delta) {
-      barrier_atoms.push(getBarrier(aH, dH, s_time - dt, p_s - dt*h_delta, h_dur + dt));
-    }
-
-    int eh_start(ml->linearize_coordinate(row_of(p_s), col_of(p_e)));
-    int eh_time(s_time + abs(col_of(p_e) - col_of(p_s)));
-    barrier_atoms.push(getBarrier(aH, dH, eh_time - dt, eh_start - dt*h_delta, h_dur+dt));
-
-    int v_dur(1 + abs(col_of(p_e) - col_of(p_s)));
-    int v_delta(col_of(p_s) < col_of(p_e) ? 1 : -1);
-    BarrierDir dV(col_of(p_s) < col_of(p_e) ? RIGHT : LEFT);
-
-    if(s_time > 0 || pathfinders[aV]->engine.start_location != p_s - dt*v_delta) {
-      barrier_atoms.push(getBarrier(aV, dV, s_time - dt, p_s - dt*v_delta, v_dur+dt));
-    }
-
-    int ev_start(ml->linearize_coordinate(row_of(p_e), col_of(p_s)));
-    int ev_time(s_time + abs(row_of(p_e) - row_of(p_s)));
-    barrier_atoms.push(getBarrier(aV, dV, ev_time - dt, ev_start - dt*v_delta, v_dur+dt));
-
-    // One of the barriers must be active
-    add_clause(*s.data, barrier_atoms);
-
-    /*
-    if(new_conflict.timestamp == 0) {
-      patom_t sel(s.new_boolvar());
-      // Set up the horizontal exit barrier
-      int h_start(ml->linearize_coordinate(row_of(p_h), col_of(p_e)));
-      int h_time(abs(col_of(p_h) - col_of(p_e)));
-      int h_dur(1 + abs(row_of(p_h) - row_of(p_e)));
-      int h_delta(row_of(p_h) < row_of(p_e) ? ml->cols : -ml->cols);
-    
-      pathfinders[new_conflict.a1]->register_barrier(sel, h_time, h_start, h_delta, h_dur);
-
-      // And repeat the same for the vertical exit barrier
-      int v_start(ml->linearize_coordinate(row_of(p_e), col_of(p_v)));
-      int v_time(abs(row_of(p_v) - row_of(p_e)));
-      int v_dur(1 + abs(col_of(p_v) - col_of(p_e)));
-      int v_delta(col_of(p_h) < col_of(p_e) ? 1 : -1);
-      
-      pathfinders[new_conflict.a2]->register_barrier(~sel, v_time, v_start, v_delta, v_dur);
-    } else {
-      // Need the entry and exit barriers
-      // FIXME: Build a table of barriers, so we can re-use them between conflicts.
-      patom_t s1(s.new_boolvar());
-      patom_t e1(s.new_boolvar());
-      patom_t s2(s.new_boolvar());
-      patom_t e2(s.new_boolvar());
+      vec<geas::clause_elt> barrier_atoms;
 
       // Entry barrier starts at top-left
-      int p_s(ml->linearize_coordinate(row_of(p_v), col_of(p_h)));
-      int s_time(new_conflict.timestamp - abs(row_of(p_s) - row_of(p_h)));
+      int s_time(new_conflict.timestamp);
+      // fprintf(stderr, "%% Adding rectangle [%d] (%d, %d) -> (%d, %d)\n", s_time, row_of(p_s), col_of(p_s), row_of(p_e), col_of(p_e));
       int dt(std::min(0, s_time));
-
       int h_dur(1 + abs(row_of(p_e) - row_of(p_s)));
       int h_delta(row_of(p_s) < row_of(p_e) ? ml->cols : -ml->cols);
-
-      pathfinders[new_conflict.a1]->register_barrier(s1, s_time - dt, p_s - dt*h_delta, h_delta, h_dur - dt);
+      
+      // assert(checkBarrierViolated(aH, s_time - dt, p_s - dt*h_delta, h_delta, h_dur + dt));
+      BarrierDir dH(row_of(p_s) < row_of(p_e) ? DOWN : UP);
+      if(s_time > 0 || pathfinders[aH]->engine.start_location != p_s - dt*h_delta) {
+        barrier_atoms.push(getBarrier(aH, dH, s_time - dt, p_s - dt*h_delta, h_dur + dt));
+      }
 
       int eh_start(ml->linearize_coordinate(row_of(p_s), col_of(p_e)));
       int eh_time(s_time + abs(col_of(p_e) - col_of(p_s)));
-
-      pathfinders[new_conflict.a1]->register_barrier(e1, eh_time - dt, eh_start - dt*h_delta, h_delta, h_dur - dt);
+      barrier_atoms.push(getBarrier(aH, dH, eh_time - dt, eh_start - dt*h_delta, h_dur+dt));
 
       int v_dur(1 + abs(col_of(p_e) - col_of(p_s)));
       int v_delta(col_of(p_s) < col_of(p_e) ? 1 : -1);
+      BarrierDir dV(col_of(p_s) < col_of(p_e) ? RIGHT : LEFT);
 
-      pathfinders[new_conflict.a2]->register_barrier(s2, s_time - dt, p_s - dt*v_delta, v_delta, v_dur - dt);
+      if(s_time > 0 || pathfinders[aV]->engine.start_location != p_s - dt*v_delta) {
+        barrier_atoms.push(getBarrier(aV, dV, s_time - dt, p_s - dt*v_delta, v_dur+dt));
+      }
 
       int ev_start(ml->linearize_coordinate(row_of(p_e), col_of(p_s)));
       int ev_time(s_time + abs(row_of(p_e) - row_of(p_s)));
-
-      pathfinders[new_conflict.a2]->register_barrier(e2, ev_time - dt, ev_start - dt*v_delta, v_delta, v_dur - dt);
+      barrier_atoms.push(getBarrier(aV, dV, ev_time - dt, ev_start - dt*v_delta, v_dur+dt));
 
       // One of the barriers must be active
-      add_clause(s.data, s1, e1, s2, e2);
-    }
-      */
-  } else {
-    int loc1 = new_conflict.p.loc1;
-    int loc2 = new_conflict.p.loc2;
-    if(loc2 > loc1)
-      std::swap(loc1, loc2);
-      
-    cons_key k { new_conflict.timestamp, loc1, loc2 };
-    auto it(cons_map.find(k));
-     
-    int idx;
-    if(it != cons_map.end()) {
-      idx = (*it).second;
-    } else {
-      idx = constraints.size();
-      cons_map.insert(std::make_pair(k, idx));
-      constraints.push(cons_data { s.new_intvar(0, pathfinders.size()-1), btset::bitset(pathfinders.size()) });
-    }
+      add_clause(*s.data, barrier_atoms);
 
-    int a1(new_conflict.a1);
-    int a2(new_conflict.a2);
-    cons_data& c(constraints[idx]);
-    if(!c.attached.elem(a1)) {
-      patom_t at(c.sel != a1);
-      while(s.level() > 0 && at.lb(s.data->ctx()))
-        s.backtrack();
-      pathfinders[a1]->register_obstacle(at, k.timestamp, k.loc1, k.loc2);
-      c.attached.insert(a1);
+      /*
+      if(new_conflict.timestamp == 0) {
+        patom_t sel(s.new_boolvar());
+        // Set up the horizontal exit barrier
+        int h_start(ml->linearize_coordinate(row_of(p_h), col_of(p_e)));
+        int h_time(abs(col_of(p_h) - col_of(p_e)));
+        int h_dur(1 + abs(row_of(p_h) - row_of(p_e)));
+        int h_delta(row_of(p_h) < row_of(p_e) ? ml->cols : -ml->cols);
+      
+        pathfinders[new_conflict.a1]->register_barrier(sel, h_time, h_start, h_delta, h_dur);
+
+        // And repeat the same for the vertical exit barrier
+        int v_start(ml->linearize_coordinate(row_of(p_e), col_of(p_v)));
+        int v_time(abs(row_of(p_v) - row_of(p_e)));
+        int v_dur(1 + abs(col_of(p_v) - col_of(p_e)));
+        int v_delta(col_of(p_h) < col_of(p_e) ? 1 : -1);
+        
+        pathfinders[new_conflict.a2]->register_barrier(~sel, v_time, v_start, v_delta, v_dur);
+      } else {
+        // Need the entry and exit barriers
+        // FIXME: Build a table of barriers, so we can re-use them between conflicts.
+        patom_t s1(s.new_boolvar());
+        patom_t e1(s.new_boolvar());
+        patom_t s2(s.new_boolvar());
+        patom_t e2(s.new_boolvar());
+
+        // Entry barrier starts at top-left
+        int p_s(ml->linearize_coordinate(row_of(p_v), col_of(p_h)));
+        int s_time(new_conflict.timestamp - abs(row_of(p_s) - row_of(p_h)));
+        int dt(std::min(0, s_time));
+
+        int h_dur(1 + abs(row_of(p_e) - row_of(p_s)));
+        int h_delta(row_of(p_s) < row_of(p_e) ? ml->cols : -ml->cols);
+
+        pathfinders[new_conflict.a1]->register_barrier(s1, s_time - dt, p_s - dt*h_delta, h_delta, h_dur - dt);
+
+        int eh_start(ml->linearize_coordinate(row_of(p_s), col_of(p_e)));
+        int eh_time(s_time + abs(col_of(p_e) - col_of(p_s)));
+
+        pathfinders[new_conflict.a1]->register_barrier(e1, eh_time - dt, eh_start - dt*h_delta, h_delta, h_dur - dt);
+
+        int v_dur(1 + abs(col_of(p_e) - col_of(p_s)));
+        int v_delta(col_of(p_s) < col_of(p_e) ? 1 : -1);
+
+        pathfinders[new_conflict.a2]->register_barrier(s2, s_time - dt, p_s - dt*v_delta, v_delta, v_dur - dt);
+
+        int ev_start(ml->linearize_coordinate(row_of(p_e), col_of(p_s)));
+        int ev_time(s_time + abs(row_of(p_e) - row_of(p_s)));
+
+        pathfinders[new_conflict.a2]->register_barrier(e2, ev_time - dt, ev_start - dt*v_delta, v_delta, v_dur - dt);
+
+        // One of the barriers must be active
+        add_clause(s.data, s1, e1, s2, e2);
+      }
+        */
+    } else {
+      int loc1 = new_conflict.p.loc1;
+      int loc2 = new_conflict.p.loc2;
+      if(loc2 > loc1)
+        std::swap(loc1, loc2);
+        
+      cons_key k { new_conflict.timestamp, loc1, loc2 };
+      auto it(cons_map.find(k));
+       
+      int idx;
+      if(it != cons_map.end()) {
+        idx = (*it).second;
+      } else {
+        idx = constraints.size();
+        cons_map.insert(std::make_pair(k, idx));
+        constraints.push(cons_data { s.new_intvar(0, pathfinders.size()-1), btset::bitset(pathfinders.size()) });
+      }
+
+      int a1(new_conflict.a1);
+      int a2(new_conflict.a2);
+      cons_data& c(constraints[idx]);
+      if(!c.attached.elem(a1)) {
+        patom_t at(c.sel != a1);
+        while(s.level() > 0 && at.lb(s.data->ctx()))
+          s.backtrack();
+        pathfinders[a1]->register_obstacle(at, k.timestamp, k.loc1, k.loc2);
+        c.attached.insert(a1);
+      }
+      if(!c.attached.elem(a2)) {
+        patom_t at(c.sel != a2);
+        while(s.level() > 0 && at.lb(s.data->ctx()))
+          s.backtrack();
+        pathfinders[a2]->register_obstacle(at, k.timestamp, k.loc1, k.loc2);
+        c.attached.insert(a2);
+      }
+      // FIXME: Abstract properly
+      //s.data->confl.pred_saved[c.sel.p>>1].val = geas::from_int((rand() % 2 ? a1 : a2));
     }
-    if(!c.attached.elem(a2)) {
-      patom_t at(c.sel != a2);
-      while(s.level() > 0 && at.lb(s.data->ctx()))
-        s.backtrack();
-      pathfinders[a2]->register_obstacle(at, k.timestamp, k.loc1, k.loc2);
-      c.attached.insert(a2);
-    }
-    // FIXME: Abstract properly
-    //s.data->confl.pred_saved[c.sel.p>>1].val = geas::from_int((rand() % 2 ? a1 : a2));
   }
+  new_conflicts.clear();
   return true;
 }
 
@@ -808,7 +953,10 @@ bool MAPF_MinCost(MAPF_Solver& mapf) {
     penalty_table.insert(std::make_pair(id, penalties.size()));
     penalties.push(MAPF_Solver::penalty { id, geas::from_int(p->pathCost()) });
   }
-
+#ifdef DEBUG_UC
+  fprintf(stderr, "%%%% Initial bound: %d\n", cost_lb);
+#endif
+ 
   vec<geas::patom_t> assumps;
   for(MAPF_Solver::penalty& p : penalties)
     assumps.push(geas::le_atom(p.p, p.lb));
@@ -852,6 +1000,9 @@ bool MAPF_MinCost(MAPF_Solver& mapf) {
     }
     cost_lb += Dmin;
     mapf.cost_lb = cost_lb;
+#ifdef DEBUG_UC
+      fprintf(stderr, "%%%% Found core of size (%d), current lower bound %d\n", core.size(), cost_lb);
+#endif
     
     // Now set up the updated assumptions
     assumps.clear();
