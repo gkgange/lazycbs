@@ -16,6 +16,7 @@
 #include <cmath>
 #include <utility>
 #include <boost/program_options.hpp>
+#include<boost/tokenizer.hpp>
 
 
 #ifndef EXTRA_PEN
@@ -41,25 +42,67 @@ void clear_handlers(void) {
 using namespace boost::program_options;
 using namespace std;
 
+AgentsLoader read_movingai(std::string fname, int upto) {
+  AgentsLoader al;
+
+  string line;
+  ifstream myfile(fname.c_str());
+  
+  if (myfile.is_open()) {
+    boost::char_separator<char> sep("\t");
+    /*
+    tokenizer< char_separator<char> > tok(line, sep);
+    tokenizer< char_separator<char> >::iterator beg=tok.begin();
+    */
+    std::getline(myfile,line); // Ditch the first line
+    for (int i=0; i < upto; i++) {
+      std::getline(myfile, line);
+      boost::tokenizer< boost::char_separator<char> > col_tok(line, sep);
+      boost::tokenizer< boost::char_separator<char> >::iterator c_beg=col_tok.begin();
+      // EX: 64	brc202d.map	530	481	446	403	444	182	259.12489166
+      ++c_beg; // Length
+      ++c_beg; // Map
+      ++c_beg; // Rows
+      ++c_beg; // Cols
+      
+      // The maps have been padded, so 'real' cells are still indexed from one.
+      int c_s = atoi((*c_beg).c_str())+1; ++c_beg;
+      int r_s = atoi((*c_beg).c_str())+1; ++c_beg;
+      int c_e = atoi((*c_beg).c_str())+1; ++c_beg;
+      int r_e = atoi((*c_beg).c_str())+1; ++c_beg;
+
+      al.addAgent(r_s, c_s, r_e, c_e);
+    }
+    myfile.close();
+  }
+  else
+    cerr << "Agents file not found." << std::endl;
+  return al;
+}
+
 int main(int argc, char** argv) {
 
   // Reading arguments ----------------------------------------------------------------
   string map_fname, agents_fname, hwy_fname, search_method, results_fname;
-  double w_hwy, w_focal;
+  /* double w_hwy = 1.0 , w_focal = 1.0 */;
   int rrr_it, time_limit;  // random restarts iterations number
+  int agents_upto;
   bool tweakGVal, rand_succ_gen;
   bool opt_makespan;
+  bool opt_anytime;
   try {
     options_description desc("Options");
     desc.add_options() 
       ("help", "Print help messages")
       ("map", value<string>(&map_fname)->required(), "Map filename")
       ("agents", value<string>(&agents_fname)->required(), "Agents filename")
-      ("highway", value<string>(&hwy_fname)->required(), "Highway filename or CRISSCROSS / GM / HONG")
-      ("focal_w", value<double>(&w_focal)->required(), "Focal weight")
-      ("highway_w", value<double>(&w_hwy)->required(), "Highway weight")
+      ("upto", value<int>(&agents_upto)->default_value(INT_MAX), "Number of agents to read (expects movingai format).")
+      // ("highway", value<string>(&hwy_fname)->required(), "Highway filename or CRISSCROSS / GM / HONG")
+      //("focal_w", value<double>(&w_focal)->default_value(1), "Focal weight")
+      //("highway_w", value<double>(&w_hwy)->default_value(1), "Highway weight")
       ("search", value<string>(&search_method)->default_value("ECBS"), "Search method (ECBS or iECBS. Default is ECBS)")
       ("makespan", value<bool>(&opt_makespan)->default_value(false), "Optimize makespan, rather than cost (Default false)")
+      ("anytime", value<bool>(&opt_anytime)->default_value(false), "Use anytime cost optimization.")
       ("tweakGVal", value<bool>(&tweakGVal)->default_value(false), "Change the cost structure or not (deprecated)")
       ("rand_succ_gen", value<bool>(&rand_succ_gen)->default_value(false), "Random order of successors generation (in the low-level search)")
       ("RRR", value<int>(&rrr_it)->default_value(0), "Random Restart #iterations (Default is 0, which runs once from root node for agentse ordered sequentially)")
@@ -98,7 +141,7 @@ int main(int argc, char** argv) {
   MapLoader ml = MapLoader(map_fname);
   
   // read agents' start and goal locations
-  AgentsLoader al = AgentsLoader(agents_fname);
+  AgentsLoader al(agents_upto < INT_MAX ? read_movingai(agents_fname, agents_upto) : AgentsLoader(agents_fname));
 
   // read the egraph (egraph file, experience_weight, weigthedastar_weight)
   EgraphReader egr;
@@ -114,15 +157,17 @@ int main(int argc, char** argv) {
     egr = *(honghwy->getHWY(100000,0.5,1.2,1.3));  // (#iterations, alpha, beta, gamma)
   } else {  // filename
 */
-    egr = EgraphReader(hwy_fname);
+    // egr = EgraphReader(hwy_fname);
 //  }
 
   cout << /*search_method */ "geas-mapf" << " ; "
        << map_fname << " ; "
        << agents_fname << " ; "
-       << hwy_fname << " ; "
-       << w_hwy << " ; "
-       << w_focal << " ; ";
+       << al.num_of_agents << " ; "
+       // << hwy_fname << " ; "
+       // << w_hwy << " ; "
+       // << w_focal << " ; ";
+       ;
     //       << std::boolalpha << tweakGVal << " ; ";
   //  cout << "PATH FOUND ; COST ; LB ; HL-EXP ; HL-GEN ; LL-EXP ; LL-GEN ; TIME[s]" << endl;
   //fflush(stdout);
@@ -154,5 +199,5 @@ int main(int argc, char** argv) {
   cout << 1000.0 * (std::clock() - start) / CLOCKS_PER_SEC << " ; ";
   mapf.printStats();
   cout << std::endl;
-  mapf.printPaths();
+  // mapf.printPaths();
 }
