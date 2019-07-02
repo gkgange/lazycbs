@@ -4,7 +4,7 @@
 
 #include "compute_heuristic.h"
 
-#define DEBUG_UC
+// #define DEBUG_UC
 // #define MAPF_NO_RECTANGLES
 
 namespace mapf {
@@ -195,7 +195,7 @@ bool MAPF_Solver::minimizeCost(void) {
   return true;
 }
 
-void MAPF_Solver::printStats(void) const {
+void MAPF_Solver::printStats(FILE* f) const {
   int LL_num_generated = 0;
   int LL_num_expanded = 0;
   int LL_executions = 0;
@@ -204,16 +204,18 @@ void MAPF_Solver::printStats(void) const {
     LL_num_expanded += p->num_expanded;
     LL_executions += p->num_executions;
   }
-  std::cout << cost_lb << " ; " << s.data->stats.conflicts << " ; " << LL_num_expanded << " ; " << LL_num_generated << " ; " << HL_conflicts << " ; " << LL_executions;
+  fprintf(f, "%d ; %d ; %d ; %d ; %d ; %d", cost_lb, s.data->stats.conflicts, LL_num_expanded, LL_num_generated, HL_conflicts, LL_executions);
+  // std::cout << cost_lb << " ; " << s.data->stats.conflicts << " ; " << LL_num_expanded << " ; " << LL_num_generated << " ; " << HL_conflicts << " ; " << LL_executions;
 }
 
-void MAPF_Solver::printPaths(void) const {
+void MAPF_Solver::printPaths(FILE* f) const {
   for(int ai = 0; ai < pathfinders.size(); ++ai) {
-    fprintf(stdout, "Agent %d:", ai);
+    fprintf(f, "Agent %d:", ai);
     for(int loc : pathfinders[ai]->getPath()) {
-      fprintf(stdout, " %d", loc);
+      // fprintf(f, " %d", loc);
+      fprintf(f, " (%d,%d)", row_of(loc)-1, col_of(loc)-1);
     }
-    fprintf(stdout, "\n");
+    fprintf(f, "\n");
   }
 }
 // Returns maximum length

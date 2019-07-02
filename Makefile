@@ -2,7 +2,7 @@ CXX       = g++
 PROF      = 
 MAPF      = mapf
 GEAS_ROOT = ../geas
-ECBS_ROOT = ../ECBS_2017_10_27
+ECBS_ROOT = ../ECBS_PF
 CXXFLAGS    = -I include -Wall -Wno-deprecated
 CXXFLAGS += --std=c++11
 CXXFLAGS += -D __STDC_LIMIT_MACROS -D __STDC_FORMAT_MACROS

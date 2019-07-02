@@ -2,7 +2,6 @@
 #include "agents_loader.h"
 #include "egraph_reader.h"
 #include <lazycbs/mapf/mapf-solver.h>
-#include "ecbs_search.h"
 
 #include <string>
 #include <cstring>
@@ -160,6 +159,7 @@ int main(int argc, char** argv) {
     // egr = EgraphReader(hwy_fname);
 //  }
 
+#if 0
   cout << /*search_method */ "geas-mapf" << " ; "
        << map_fname << " ; "
        << agents_fname << " ; "
@@ -168,6 +168,7 @@ int main(int argc, char** argv) {
        // << w_hwy << " ; "
        // << w_focal << " ; ";
        ;
+#endif
     //       << std::boolalpha << tweakGVal << " ; ";
   //  cout << "PATH FOUND ; COST ; LB ; HL-EXP ; HL-GEN ; LL-EXP ; LL-GEN ; TIME[s]" << endl;
   //fflush(stdout);
@@ -184,20 +185,22 @@ int main(int argc, char** argv) {
 	// ecbs.time_limit_cutoff = time_limit;
   // bool res = ecbs.runECBSSearch();
   // ecbs.printPaths();
+  bool okay = false;
   try {
     if(terminated)
       throw mapf::MAPF_Solver::SolveAborted {};
 
     // bool res = mapf.minimizeCost();
-    bool res = opt_makespan ? MAPF_MinMakespan(mapf) : MAPF_MinCost(mapf);
+    okay = opt_makespan ? MAPF_MinMakespan(mapf) : MAPF_MinCost(mapf);
     // bool res = MAPF_MinMakespan(mapf);
-    cout << "done ; ";
   } catch (mapf::MAPF_Solver::SolveAborted& s) {
     // fprintf(stderr, "%% Solve aborted.\n");
-    cout << "timeout ; ";
   }
-  cout << 1000.0 * (std::clock() - start) / CLOCKS_PER_SEC << " ; ";
-  mapf.printStats();
-  cout << std::endl;
-  // mapf.printPaths();
+  if(okay)
+    mapf.printPaths(stdout);
+
+  fprintf(stderr, "lazy-cbs ; %s ; %s ; %d ; %s ; %.02lf ; ", map_fname.c_str(), agents_fname.c_str(), al.num_of_agents,
+    okay ? "done" : "timeout", 1000.0 * (std::clock() - start) / CLOCKS_PER_SEC);
+  mapf.printStats(stderr);
+  fprintf(stderr, "\n");
 }
