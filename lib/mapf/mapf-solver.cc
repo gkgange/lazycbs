@@ -352,7 +352,7 @@ bool MAPF_Solver::resolveConflicts(void) {
     nmap[loc] = ai;
   }
   // Run through the candidate plan, identify agents with conflicts.
-  for(int t = 1; t < pMax; ++t) {
+  for(int t = 1; t <= pMax; ++t) {
     std::swap(cmap, nmap);
 
     for(int ai = 0; ai < pathfinders.size(); ++ai) {
@@ -520,7 +520,7 @@ bool MAPF_Solver::checkForConflicts(void) {
   // All agents are interesting.
   agent_set.sz = pathfinders.size();
 
-  for(int t = 1; t < pMax; ++t) {
+  for(int t = 1; t <= pMax; ++t) {
     std::swap(cmap, nmap);
 
     // for(int ai = 0; ai < pathfinders.size(); ++ai) {
