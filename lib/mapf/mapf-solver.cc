@@ -377,7 +377,7 @@ bool MAPF_Solver::resolveConflicts(void) {
     // Now we zero out the previous cmap.
     clear_map(this, cmap, t-1);
   }
-  clear_map(this, nmap, pMax-1);
+  clear_map(this, nmap, pMax);
   
   for(int ai = 0; ai < pathfinders.size(); ++ai) {
     if(conflicting[ai]) {
@@ -631,7 +631,7 @@ bool MAPF_Solver::checkForConflicts(void) {
     // Now we zero out the previous cmap.
     clear_map(this, cmap, t-1);
   }
-  clear_map(this, nmap, pMax-1);
+  clear_map(this, nmap, pMax);
 
   return new_conflicts.size() > 0;
 }
