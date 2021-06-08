@@ -21,31 +21,35 @@ CXXFLAGS += -I $(GEAS_ROOT)/include
 LFLAGS += -L $(ECBS_ROOT) -L $(GEAS_ROOT) -L . -lboost_program_options -lboost_graph -lgeas -lecbs
 LFLAGS += $(PROF_FLAGS)
 
-COPTIMIZE = -O3 -march=native -ffast-math -funroll-loops # -freorder-blocks-and-partition
+#COPTIMIZE = -O3 -march=native -ffast-math -funroll-loops # -freorder-blocks-and-partition
 #COPTIMIZE = -O2
 #COPTIMIZE = -O1
-#COPTIMIZE = -O0
+COPTIMIZE = -O0
 #COPTIMIZE += -DNDEBUG
 COPTIMIZE += $(PROF_FLAGS)
 CXXFLAGS += $(COPTIMIZE)
 #CXXFLAGS += -ggdb -D DEBUG
 CXXFLAGS += -g -ggdb
 
-MAPF_SRCS     = $(wildcard lib/$(MAPF)/*.cc)
+MAPF_SRCS     = $(wildcard lib/$(MAPF)/*.cc) $(wildcard lib/pf/*.cc)
 MAPF_OBJS     = $(addsuffix .o, $(basename $(MAPF_SRCS)))
 MAPF_DEPS     = $(addsuffix .d, $(basename $(MAPF_SRCS)))
 
+TEST_SRCS     = $(wildcard test/*.cc)
+TESTS         = $(basename $(TEST_SRCS))
+TEST_OBJS     = $(addsuffix .o, $(TESTS))
+TEST_DEPS     = $(addsuffix .d, $(TESTS))
 #TARGETS = $(TESTS)
 #MLTARGETS = ml/libgeas_ml.a ml/geas.cma ml/geas.cmxa ml/geas.a
 #FZN_TARGETS = fzn/fzn_geas fzn/fzn_geas.debug
 
-TARGETS = lazy-cbs
+TARGETS = lazy-cbs $(TESTS)
 LIBGEAS = libgeas.a
 LIBECBS = libecbs.a
 all: $(TARGETS)
 
 ## Dependencies
-$(TESTS) : % : %.o $(COBJS)
+$(TESTS) : % : %.o $(MAPF_OBJS)
 
 .PHONY: all clean tests
 
