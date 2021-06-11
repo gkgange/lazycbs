@@ -91,6 +91,12 @@ public:
     elts.push(elt);
     percolateUp(pos, elt);
   }
+  void insert_or_decrease(const T& elt) {
+    if(!in_heap(elt))
+      insert(elt);
+    else
+      decrease(elt);
+  }
   void decrease(const T& elt) {
     assert(in_heap(elt));
     percolateUp(env.pos(elt), elt);

@@ -1,6 +1,7 @@
 #ifndef LAZYCBS__PF__HPP
 #define LAZYCBS__PF__HPP
 
+#include <utility>
 #include <geas/mtl/Vec.h>
 #include <geas/mtl/p-sparse-set.h>
 // #include <lazycbs/support/graph.h>
@@ -30,17 +31,20 @@ void nav_add(navigation& n, int src, pf::Move m, int dest) {
 }
 
 template<class T>
-navigation navigation::of_obstacle_array(int width, int height, const T& array) {
+navigation navigation::of_obstacle_array(int width, int height, const T& array, vec<std::pair<int, int> >& loc_coords) {
   vec<int> prev_row(width);
   vec<int> curr_row(width);
 
   navigation nav;
-  if(!array[0])
+  if(!array[0]) {
     curr_row[0] = nav_push(nav);
+    loc_coords.push(std::make_pair(0, 0));
+  }
 
   for(int c = 1; c < width; ++c) {
     if(!array[c]) {
       curr_row[c] = nav_push(nav);
+      loc_coords.push(std::make_pair(0, c));
       if(!array[c-1]) {
         // Add the transitions.
         nav_add(nav, curr_row[c-1], pf::M_RIGHT, curr_row[c]);
@@ -56,6 +60,7 @@ navigation navigation::of_obstacle_array(int width, int height, const T& array) 
 
     if(!array[idx]) {
       curr_row[0] = nav_push(nav);
+      loc_coords.push(std::make_pair(r, 0));
       if(!array[prev_idx]) {
         nav_add(nav, prev_row[0], pf::M_DOWN, curr_row[0]);
         nav_add(nav, curr_row[0], pf::M_UP, prev_row[0]);
@@ -65,6 +70,7 @@ navigation navigation::of_obstacle_array(int width, int height, const T& array) 
     for(int c = 1; c < width; ++c, ++idx, ++prev_idx) {
       if(!array[idx]) {
         curr_row[c] = nav_push(nav);
+        loc_coords.push(std::make_pair(r, c));
         if(!array[idx-1]) {
           nav_add(nav, curr_row[c-1], pf::M_RIGHT, curr_row[c]);
           nav_add(nav, curr_row[c], pf::M_LEFT, curr_row[c-1]);

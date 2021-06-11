@@ -1,4 +1,5 @@
 #include <iostream>
+#include <algorithm>
 #include <lazycbs/pf/pf.hh>
 #include <lazycbs/pf/pf.hpp>
 #include <lazycbs/pf/sipp.hh>
@@ -11,10 +12,29 @@ const char map[] =
               0, 0, 0, 1, 0,
               0, 0, 0, 1, 0,
               0, 0, 0, 0, 0} ;
-int main(int argc, char** argv) {
-  mapf::navigation nav(mapf::navigation::of_obstacle_array(5, 5, map));
 
+int find_coord(vec< std::pair<int, int> >& map, int r, int c) {
+  auto ptr = std::lower_bound(map.begin(), map.end(), std::make_pair(r, c));
+  assert(*ptr == std::make_pair(r, c));
+  return ptr - map.begin();
+}
+
+const char* move_str[] =
+  { "right",
+    "left",
+    "down",
+    "up",
+    "wait",
+    "stop" };
+  
+int main(int argc, char** argv) {
+  vec< std::pair<int, int> > loc_coord;
+  mapf::navigation nav(mapf::navigation::of_obstacle_array(5, 5, map, loc_coord));
+
+  cout << "(4, 3) => " << find_coord(loc_coord, 4, 3) << std::endl;
+  
   int* heur = nav.fwd_heuristic(3); 
+  int* rheur = nav.rev_heuristic(1);
 
   mapf::sipp_ctx sctx(nav);
 
@@ -30,11 +50,40 @@ int main(int argc, char** argv) {
   cout << "]" << std::endl;
 
   mapf::sipp_pathfinder spf(nav);
-  int dist = spf.search(1, 3, sctx.ptr, heur);
+  int dist = spf.search(1, 3, sctx, heur);
   cout << "1 -> 3 : " << dist << std::endl;
 
-  sctx.ptr[18].Tend = 5;
-  dist = spf.search(1, 3, sctx.ptr, heur);
+  mapf::sipp_explainer ex(nav);
+  
+  sctx.lock(18, 5);
+  dist = spf.search(1, 3, sctx, heur);
+  cout << "1 -> 3 : " << dist << std::endl;
+
+  vec<mapf::sipp_explainer::cst> expl;
+  ex.explain(1, 3, 100, sctx, heur, rheur, expl);
+
+  cout << "explanation: [";
+  auto it = expl.begin();
+  auto en = expl.end();
+  if(it != en) {
+    cout << "(" << (*it).loc << ":" << move_str[(*it).move] << ":" << (*it).time << ")";
+    for(++it; it != en; ++it) {
+      cout << ", (" << (*it).loc << ":" << move_str[(*it).move] << ":" << (*it).time << ")";
+    }
+  }
+  cout << "]" << std::endl;
+
+  sctx.unlock(18);
+  sctx.forbid(mapf::pf::M_WAIT, 18, 5);
+  dist = spf.search(1, 3, sctx, heur);
+  cout << "1 -> 3 : " << dist << std::endl;
+
+  sctx.forbid(mapf::pf::M_WAIT, 19, 7);
+  dist = spf.search(1, 3, sctx, heur);
+  cout << "1 -> 3 : " << dist << std::endl;
+
+  sctx.release(mapf::pf::M_WAIT, 18, 5);
+  dist = spf.search(1, 3, sctx, heur);
   cout << "1 -> 3 : " << dist << std::endl;
   /*
   mapf::simple_pathfinder pf(nav);

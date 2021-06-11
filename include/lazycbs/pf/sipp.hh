@@ -6,7 +6,7 @@ namespace mapf {
 
 // Alternate SIPP-esque pathfinder.
 struct sipp_interval {
-  sipp_interval(unsigned _start, unsigned char _constraints = 0)
+  sipp_interval(int _start, unsigned char _constraints = 0)
     : start(_start), constraints(_constraints) { }
 
   // Persistent data
@@ -16,37 +16,40 @@ struct sipp_interval {
   inline bool may_wait(void) const {
     return !(constraints & pf::C_VERT);
   }
-  unsigned start; // When does the interval start?
+  int start; // When does the interval start?
   unsigned char constraints; // What constraints are active?
 
   pf::Move pred;
 
   // Transient state
-  unsigned reach; // What time have could we reach this interval?
-  unsigned next_ex; // What time will we next expand from?
+  int reach; // What time have could we reach this interval?
+  int next_ex; // What time will we next expand from?
 
   unsigned tag; // Intrusive heap info
 };
 
 struct sipp_loc {
   sipp_loc(void);
+
   vec<sipp_interval> i;
-  unsigned Tend;
+  int Tend;
 
-  unsigned timestamp;
+  int timestamp;
 
-  unsigned size(void) const { return i.size(); }
+  int size(void) const { return i.size(); }
   sipp_interval& operator[](int idx) { return i[idx]; }
 
   sipp_interval* begin(void) const { return i.begin(); }
-  sipp_interval* reach(unsigned t) const; // Last interval not-after t.
+  sipp_interval* reach(int t) const; // Last interval not-after t.
   // Final interval is always <INT_MAX, C_VERT>, don't include it during iteration.
   // We use INT_MAX (instead of UINT_MAX) as an ugly fix for boundary conditions.
   sipp_interval* end(void) const { return i.end()-1; }
 
-  void reset(unsigned current_time) {
-    for(sipp_interval& iv : i)
-      iv.reach = INT_MAX;
+  void reset(int current_time) {
+    for(sipp_interval& iv : i) {
+      iv.reach = INT_MAX-1;
+      iv.next_ex = INT_MIN+1;
+    }
     timestamp = current_time;
   }
 };
@@ -55,17 +58,29 @@ struct sipp_ctx {
   sipp_ctx(const navigation& nav);
   ~sipp_ctx(void) { delete[] ptr; }
 
+  void forbid(pf::Move m, unsigned loc, int time);
+  void lock(unsigned loc, int time);
+  void unlock(unsigned loc);
+  bool release(pf::Move m, unsigned loc, int time);
+
+  sipp_interval& _create(unsigned loc, int time);
+
+  sipp_loc& operator[](int c) { return ptr[c]; }
+  const sipp_loc& operator[](int c) const { return ptr[c]; }
+  
   sipp_loc* ptr;
+  int timestamp;
+};
+
+struct IntId {
+  IntId(unsigned _loc, int _idx)
+    : loc(_loc), idx(_idx) { }
+  bool operator==(const IntId& o) const {return loc == o.loc && idx == o.idx; }
+  unsigned loc;
+  int idx;
 };
 
 struct sipp_pathfinder {
-  struct IntId {
-    IntId(unsigned _loc, unsigned _idx)
-      : loc(_loc), idx(_idx) { }
-    bool operator==(const IntId& o) const {return loc == o.loc && idx == o.idx; }
-    unsigned loc;
-    unsigned idx;
-  };
 
   // Operations for the Step heap.
   struct sipp_env {
@@ -76,8 +91,8 @@ struct sipp_pathfinder {
     int* heur;
 
     sipp_interval& get(IntId s) const { return ctx[s.loc].i[s.idx]; }
-    unsigned int G(IntId s) const { return heur[s.loc]; }
-    unsigned int H(IntId s) const { return G(s) + get(s).next_ex; }
+    int G(IntId s) const { return heur[s.loc]; }
+    int H(IntId s) const { return G(s) + get(s).next_ex; }
 
     // Currently ignoring the reservation table.
     bool lt(IntId s, IntId t) const {
@@ -97,12 +112,8 @@ struct sipp_pathfinder {
       state[loc].reset(timestamp);
     return state[loc];
   }
-  /*
-  inline sipp_interval& get(unsigned loc, unsigned idx) const { return state[loc].i[idx]; }
-  inline sipp_interval& get(IntId c) const { return state[c.loc].i[c.idx]; }
-  */
 
-  unsigned search(int origin, int goal, sipp_loc* state, int* heur);
+  int search(int origin, int goal, sipp_ctx& state, int* heur);
 
   // Parameters
   const navigation& nav;
@@ -111,17 +122,68 @@ struct sipp_pathfinder {
   // Transient state
   sipp_loc* state;
 
-  unsigned timestamp;
+  int timestamp;
 };
 
 class sipp_explainer {
+public:
   struct cst {
-    cst(int _loc, unsigned _time, pf::Move _move)
+    cst(int _loc, int _time, unsigned _move)
       : loc(_loc), time(_time), move(_move) { }
-    int loc;
-    unsigned time : 24;
+    unsigned loc;
+    int time : 24;
     unsigned move : 8;
   };
+  struct mark_env {
+    mark_env(void)
+      : ctx(nullptr) { }
+
+    sipp_loc* ctx;
+
+    sipp_interval& get(IntId s) const { return ctx[s.loc].i[s.idx]; }
+    int H(IntId s) const { return get(s).next_ex; }
+
+    // Currently ignoring the reservation table.
+    bool lt(IntId s, IntId t) const {return H(s) > H(t); }
+    unsigned pos(IntId s) const { return get(s).tag; }
+    unsigned pos(IntId s, unsigned t) { return get(s).tag = t; }
+  };
+  struct collect_env {
+    collect_env(void)
+      : ctx(nullptr) { }
+
+    sipp_loc* ctx;
+
+    sipp_interval& get(IntId s) const { return ctx[s.loc].i[s.idx]; }
+    int H(IntId s) const { return get(s).next_ex; }
+
+    // Currently ignoring the reservation table.
+    bool lt(IntId s, IntId t) const {return H(s) > H(t); }
+    unsigned pos(IntId s) const { return get(s).tag; }
+    unsigned pos(IntId s, unsigned t) { return get(s).tag = t; }
+  };
+
+  enum { M_LOCK = pf::NUM_MOVES };
+
+  sipp_explainer(const navigation& _nav)
+    : nav(_nav), ctx(nullptr), timestamp(0)
+    , mark_heap(mark_env()), collect_heap(collect_env()) { }
+
+  inline sipp_loc& get(unsigned loc) const {
+    if(timestamp != ctx[loc].timestamp)
+      ctx[loc].reset(timestamp);
+    return ctx[loc];
+  }
+
+  void explain(int origin, int goal, int Tub, sipp_ctx& state, int* heur, int* r_heur,
+               vec<cst>& out_cst); 
+
+  const navigation& nav;
+  
+  sipp_loc* ctx;
+  int timestamp;
+  IntrusiveHeap<IntId, mark_env> mark_heap;
+  IntrusiveHeap<IntId, collect_env> collect_heap;
 };
 
 };

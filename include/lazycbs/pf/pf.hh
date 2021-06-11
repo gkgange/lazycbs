@@ -76,7 +76,8 @@ struct navigation {
   };
 
   template<class T>
-  static navigation of_obstacle_array(int width, int height, const T& blocked);
+  static navigation of_obstacle_array(int width, int height, const T& blocked,
+                                      vec<std::pair<int, int> >& out_coord);
 
   int size(void) const { return succ.size(); }
   
