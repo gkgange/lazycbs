@@ -22,6 +22,8 @@ struct sipp_interval {
   pf::Move pred;
 
   // Transient state
+  unsigned char second;
+  
   int reach; // What time have could we reach this interval?
   int next_ex; // What time will we next expand from?
 
@@ -98,6 +100,8 @@ struct sipp_pathfinder {
     bool lt(IntId s, IntId t) const {
       if(H(s) != H(t))
         return H(s) < H(t);
+      if(get(s).second != get(t).second)
+        return get(s).second < get(t).second;
       return G(s) < G(t);
     }
     unsigned pos(IntId s) const { return get(s).tag; }
@@ -113,11 +117,15 @@ struct sipp_pathfinder {
     return state[loc];
   }
 
-  int search(int origin, int goal, sipp_ctx& state, int* heur);
+  int search(int origin, int goal, sipp_ctx& state, int* heur,
+             const constraints& reserved);
 
   // Parameters
   const navigation& nav;
   IntrusiveHeap<IntId, sipp_env> heap;
+
+  // Recording
+  vec< std::pair<int, pf::Move> > path;
 
   // Transient state
   sipp_loc* state;

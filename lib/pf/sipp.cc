@@ -103,7 +103,8 @@ sipp_interval* sipp_loc::reach(int t) const {
   assert(0);
 }
 
-int sipp_pathfinder::search(int origin, int goal, sipp_ctx& ctx, int* heur) {
+int sipp_pathfinder::search(int origin, int goal, sipp_ctx& ctx, int* heur,
+                            const constraints& reserved) {
   // Set up parameters
   heap.clear();
   state = ctx.ptr;
@@ -117,6 +118,7 @@ int sipp_pathfinder::search(int origin, int goal, sipp_ctx& ctx, int* heur) {
   sipp_loc& origin_loc(get(origin));
   origin_loc[0].reach = origin_loc[0].next_ex = 0;
   origin_loc[0].pred = pf::M_WAIT;
+  origin_loc[0].second = 0;
   heap.insert(IntId(origin, 0));
 
   while(!heap.empty()) {
@@ -131,12 +133,25 @@ int sipp_pathfinder::search(int origin, int goal, sipp_ctx& ctx, int* heur) {
     // Check for goal location.
     // We do it here, in case we might arrive at the goal
     // along one interval, then later by an earlier one.
-    if(curr.loc == goal && curr.idx >= goal_idx)
+    if(curr.loc == goal && curr.idx >= goal_idx) {
+      // Reconstruct the corresponding path
+      path.clear();
+
+      int path_loc = curr.loc;
+      sipp_interval* path_step(&curr_itv);
+      while(path_step->reach > 0) {
+        path.push(std::make_pair(path_step->reach-1, path_step->pred));
+        path_loc = nav.inv[path_loc].dest[path_step->pred];
+        path_step = state[path_loc].reach(path_step->reach-1);
+      }
+      std::reverse(path.begin(), path.end());
       return curr_itv.reach;
+    }
 
     int t = curr_itv.next_ex + 1;
     int max_ex = 1 + std::min(curr_loc[curr.idx+1].start, curr_loc.Tend);
     int next_ex = max_ex;
+    unsigned char second = curr_itv.second;
     for(auto p : nav.successors(curr.loc)) {
       sipp_loc& succ(get(p.second));
       if(succ.Tend <= t)
@@ -157,8 +172,11 @@ int sipp_pathfinder::search(int origin, int goal, sipp_ctx& ctx, int* heur) {
           break;
         }
       found_open_succ:
-        if(t < succ_it->reach) {
+        unsigned char p_second = std::min(127, second + reserved.score(p.first, p.second, succ_t));
+        if(succ_t < succ_it->reach
+           || (succ_t == succ_it->reach && p_second < succ_it->second)) {
           succ_it->reach = succ_it->next_ex = succ_t;
+          succ_it->second = p_second;
           succ_it->pred = p.first;
           IntId succ_id(p.second, succ_it - succ.begin());
           heap.insert_or_decrease(succ_id);
@@ -175,6 +193,7 @@ int sipp_pathfinder::search(int origin, int goal, sipp_ctx& ctx, int* heur) {
       heap.insert(curr);
     } else {
       // We _should_ still be the top.
+      // FIXME: Deal with conflicts on waits.
       sipp_interval& wait(curr_loc[curr.idx+1]);
       if(wait.reach < curr_loc.Tend
          && wait.start < wait.reach
