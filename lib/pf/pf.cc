@@ -13,6 +13,15 @@ pf::Move movedir(const navigation& nav, int prev, int curr) {
   assert(0);
 }
 
+static pf::Move move_inv[] = {
+  pf::M_LEFT,
+  pf::M_RIGHT,
+  pf::M_UP,
+  pf::M_DOWN,
+  pf::M_WAIT,
+  pf::NUM_MOVES
+};
+
 void constraints::forbid(pf::Move m, int loc, unsigned t) {
   auto& mask(masks[loc]);
   auto it = mask.find(t);
@@ -87,10 +96,9 @@ int* navigation::rev_heuristic(int origin) {
 }
 
 namespace reservation {
-table::table(int map_sz, int num_agents)
+table::table(int map_sz)
   : res_counts(map_sz)
   , reserved(map_sz)
-  , plans(num_agents)
 {
 
 }
@@ -119,39 +127,30 @@ void table::_inc_move(int loc, int t, pf::Move m) {
 }
 
 // Used for temporarily suppressing an agent's plan during pathfinding.
-void table::_forget(const navigation& nav, int agent) {
-  const auto& plan(plans[agent]);
-
-  int prev = plan[0];
-  for(int t = 1; t < plan.size(); ++t) {
-    int curr = plan[t];
+void table::release(const navigation& nav, int origin, const pf::Path& path) {
+  int prev = origin;
+  for(pf::Step step : path) {
+    int t = step.first;
+    int curr = nav.delta[prev][step.second];
     // Both c_cell and p_cell should exist.
     _dec_move(curr, t, pf::M_WAIT);
     if(prev != curr)
-      _dec_move(prev, t, movedir(nav, curr, prev));
-
+      _dec_move(prev, t, move_inv[step.second]);
     prev = curr;
   }
 }
 
-void table::_remember(const navigation& nav, int agent) {
-  const auto& plan(plans[agent]);
-
-  int prev = plan[0];
-  for(int t = 1; t < plan.size(); ++t) {
-    int curr = plan[t];
+void table::reserve(const navigation& nav, int origin, const pf::Path& path) {
+  int prev = origin;
+  for(pf::Step step : path) {
+    int t = step.first;
+    int curr = nav.delta[prev][step.second];
+    // Both c_cell and p_cell should exist.
     _inc_move(curr, t, pf::M_WAIT);
     if(prev != curr)
-      _dec_move(prev, t, movedir(nav, curr, prev));
-
+      _inc_move(prev, t, move_inv[step.second]);
     prev = curr;
   }
-}
-
-void table::reserve(const navigation& nav, int agent, vec<int>& plan) {
-  _forget(nav, agent);
-  plans[agent] = plan;
-  _remember(nav, agent);
 }
 
 }

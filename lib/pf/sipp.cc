@@ -140,7 +140,7 @@ int sipp_pathfinder::search(int origin, int goal, sipp_ctx& ctx, int* heur,
       int path_loc = curr.loc;
       sipp_interval* path_step(&curr_itv);
       while(path_step->reach > 0) {
-        path.push(std::make_pair(path_step->reach-1, path_step->pred));
+        path.push(std::make_pair(path_step->reach, path_step->pred));
         path_loc = nav.inv[path_loc].dest[path_step->pred];
         path_step = state[path_loc].reach(path_step->reach-1);
       }

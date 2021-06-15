@@ -8,6 +8,7 @@
 #include <geas/solver/solver.h>
 #include <geas/utils/bitset.h>
 
+#include <lazycbs/mapf/coordinator.h>
 #include <lazycbs/mapf/agent-pf.h>
 
 namespace mapf {

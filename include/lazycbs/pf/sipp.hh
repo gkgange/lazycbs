@@ -124,8 +124,9 @@ struct sipp_pathfinder {
   const navigation& nav;
   IntrusiveHeap<IntId, sipp_env> heap;
 
-  // Recording
-  vec< std::pair<int, pf::Move> > path;
+  // Recording the incumbent path in terms of
+  // (timestep, location).
+  pf::Path path;
 
   // Transient state
   sipp_loc* state;

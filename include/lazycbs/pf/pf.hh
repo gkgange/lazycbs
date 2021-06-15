@@ -25,6 +25,11 @@ struct pf {
     C_RIGHT = 1, C_LEFT = 2, C_DOWN = 4, C_UP = 8,
     C_VERT = 16
   };
+
+  typedef std::pair<int, Move> Step;
+  typedef vec<Step> Path;
+
+  static int path_cost(const Path& path) { return path.last().first; }
 };
 
 struct constraints {
@@ -72,6 +77,7 @@ inline unsigned char constraints::score(pf::Move m, int loc, unsigned time) cons
 struct navigation {
   typedef vec< std::pair<pf::Move, int> > adj_list;
   struct transition {
+    int operator[](pf::Move m) const { return dest[m]; }
     int dest[pf::NUM_MOVES];
   };
 
@@ -96,18 +102,17 @@ struct navigation {
 namespace reservation {
 
 struct table {
-  table(int size, int num_agents);
+  table(int size);
 
   inline bool is_allowed(pf::Move m, int loc, unsigned time);
   inline unsigned char score(pf::Move m, int loc, unsigned time);
 
-  void reserve(const navigation& nav, int agent, vec<int>& plan);
+  void reserve(const navigation& nav, int origin, const pf::Path& path);
+  void release(const navigation& nav, int origin, const pf::Path& path);
 
   // Used for temporarily suppressing agents during planning.
   void _dec_move(int loc, int t, pf::Move m);
   void _inc_move(int loc, int t, pf::Move m);
-  void _forget(const navigation& nav, int agent);
-  void _remember(const navigation& nav, int agent);
   
   // Ignore implementation details this really shouldn't be in a header.
   struct res_cell {
@@ -127,8 +132,6 @@ struct table {
   // TODO: Replace these with less awful structures.
   vec<res_count_map> res_counts;
   constraints reserved;
-
-  vec< vec<int> > plans;
 };
 
 
