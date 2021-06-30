@@ -142,49 +142,9 @@ int main(int argc, char** argv) {
   // read agents' start and goal locations
   AgentsLoader al(agents_upto < INT_MAX ? read_movingai(agents_fname, agents_upto) : AgentsLoader(agents_fname));
 
-  // read the egraph (egraph file, experience_weight, weigthedastar_weight)
-  EgraphReader egr;
-/*
-  if (hwy_fname.compare("CRISSCROSS") == 0) {
-    egr = EgraphReader();
-    egr.createCrissCrossHWY(&ml);
-  } else if (hwy_fname.compare("GM") == 0) {
-    LearnGMHWY* lgmhwy = new LearnGMHWY(map_fname, agents_fname);
-    egr = *(lgmhwy->getHWY(1, w_hwy, 1));  // #iterations=1, w_hwy(=1 for first iteration), w_focal=1
-  } else if (hwy_fname.compare("HONG") == 0) {
-    HongHWY* honghwy = new HongHWY(map_fname, agents_fname);
-    egr = *(honghwy->getHWY(100000,0.5,1.2,1.3));  // (#iterations, alpha, beta, gamma)
-  } else {  // filename
-*/
-    // egr = EgraphReader(hwy_fname);
-//  }
-
-#if 0
-  cout << /*search_method */ "geas-mapf" << " ; "
-       << map_fname << " ; "
-       << agents_fname << " ; "
-       << al.num_of_agents << " ; "
-       // << hwy_fname << " ; "
-       // << w_hwy << " ; "
-       // << w_focal << " ; ";
-       ;
-#endif
-    //       << std::boolalpha << tweakGVal << " ; ";
-  //  cout << "PATH FOUND ; COST ; LB ; HL-EXP ; HL-GEN ; LL-EXP ; LL-GEN ; TIME[s]" << endl;
-  //fflush(stdout);
-  mapf::MAPF_Solver mapf(ml, al, egr, 1e8);
-
-  //ofstream res_f;
-  //res_f.open(results_fname, ios::app);  // append the results file
-
-  //bool res;
-  //cout << rrr_it << " ; ";
+  mapf::MAPF_Solver mapf(ml, al, 1e8);
 
   clear_handlers();
-	// ECBSSearch ecbs = ECBSSearch(ml, al, egr, w_hwy, w_focal, tweakGVal, rrr_it, rand_succ_gen);
-	// ecbs.time_limit_cutoff = time_limit;
-  // bool res = ecbs.runECBSSearch();
-  // ecbs.printPaths();
   bool okay = false;
   try {
     if(terminated)

@@ -12,7 +12,8 @@
 
 namespace mapf {
 
-int nav_push(navigation& n) {
+struct _nav {
+static int push(navigation& n) {
   int idx = n.succ.size();
 
   n.succ.push();
@@ -23,12 +24,21 @@ int nav_push(navigation& n) {
   n.inv.last().dest[pf::M_WAIT] = idx;
   return idx;
 }
-void nav_add(navigation& n, int src, pf::Move m, int dest) {
+
+static void add(navigation& n, int src, pf::Move m, int dest) {
   n.succ[src].push(std::make_pair(m, dest));
   n.pred[dest].push(std::make_pair(m, src));
   n.delta[src].dest[m] = dest;
   n.inv[dest].dest[m] = src;
 }
+
+static int find_coord(const vec< std::pair<int, int> >& map, int r, int c) {
+  auto ptr = std::lower_bound(map.begin(), map.end(), std::make_pair(r, c));
+  assert(*ptr == std::make_pair(r, c));
+  return ptr - map.begin();
+}
+
+};
 
 template<class T>
 navigation navigation::of_obstacle_array(int width, int height, const T& array, vec<std::pair<int, int> >& loc_coords) {
@@ -37,18 +47,18 @@ navigation navigation::of_obstacle_array(int width, int height, const T& array, 
 
   navigation nav;
   if(!array[0]) {
-    curr_row[0] = nav_push(nav);
+    curr_row[0] = _nav::push(nav);
     loc_coords.push(std::make_pair(0, 0));
   }
 
   for(int c = 1; c < width; ++c) {
     if(!array[c]) {
-      curr_row[c] = nav_push(nav);
+      curr_row[c] = _nav::push(nav);
       loc_coords.push(std::make_pair(0, c));
       if(!array[c-1]) {
         // Add the transitions.
-        nav_add(nav, curr_row[c-1], pf::M_RIGHT, curr_row[c]);
-        nav_add(nav, curr_row[c], pf::M_LEFT, curr_row[c-1]);
+        _nav::add(nav, curr_row[c-1], pf::M_RIGHT, curr_row[c]);
+        _nav::add(nav, curr_row[c], pf::M_LEFT, curr_row[c-1]);
       }
     }
   }
@@ -59,25 +69,25 @@ navigation navigation::of_obstacle_array(int width, int height, const T& array, 
     std::swap(curr_row, prev_row);
 
     if(!array[idx]) {
-      curr_row[0] = nav_push(nav);
+      curr_row[0] = _nav::push(nav);
       loc_coords.push(std::make_pair(r, 0));
       if(!array[prev_idx]) {
-        nav_add(nav, prev_row[0], pf::M_DOWN, curr_row[0]);
-        nav_add(nav, curr_row[0], pf::M_UP, prev_row[0]);
+        _nav::add(nav, prev_row[0], pf::M_DOWN, curr_row[0]);
+        _nav::add(nav, curr_row[0], pf::M_UP, prev_row[0]);
       }
     }
     ++idx, ++prev_idx;
     for(int c = 1; c < width; ++c, ++idx, ++prev_idx) {
       if(!array[idx]) {
-        curr_row[c] = nav_push(nav);
+        curr_row[c] = _nav::push(nav);
         loc_coords.push(std::make_pair(r, c));
         if(!array[idx-1]) {
-          nav_add(nav, curr_row[c-1], pf::M_RIGHT, curr_row[c]);
-          nav_add(nav, curr_row[c], pf::M_LEFT, curr_row[c-1]);
+          _nav::add(nav, curr_row[c-1], pf::M_RIGHT, curr_row[c]);
+          _nav::add(nav, curr_row[c], pf::M_LEFT, curr_row[c-1]);
         }
         if(!array[prev_idx]) {
-          nav_add(nav, prev_row[c], pf::M_DOWN, curr_row[c]);
-          nav_add(nav, curr_row[c], pf::M_UP, prev_row[c]);
+          _nav::add(nav, prev_row[c], pf::M_DOWN, curr_row[c]);
+          _nav::add(nav, curr_row[c], pf::M_UP, prev_row[c]);
         }
       }
     }

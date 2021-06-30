@@ -4,15 +4,6 @@
 
 namespace mapf {
 
-// FIXME: Come up with a good mechanism for this.
-pf::Move movedir(const navigation& nav, int prev, int curr) {
-  for(auto p : nav.successors(prev)) {
-    if(p.second == curr)
-      return p.first;
-  }
-  assert(0);
-}
-
 static pf::Move move_inv[] = {
   pf::M_LEFT,
   pf::M_RIGHT,
@@ -51,7 +42,7 @@ void constraints::lock(int loc, unsigned t) {
   lock_time[loc] = t;
 }
 
-int* navigation::fwd_heuristic(int dest) {
+int* navigation::fwd_heuristic(int dest) const {
   int* heur = new int[succ.size()];
   vec<int> queue;
   for(int l = 0; l < succ.size(); ++l)
@@ -73,7 +64,7 @@ int* navigation::fwd_heuristic(int dest) {
   return heur;
 }
 
-int* navigation::rev_heuristic(int origin) {
+int* navigation::rev_heuristic(int origin) const {
   int* heur = new int[succ.size()];
   vec<int> queue;
   for(int l = 0; l < succ.size(); ++l)
@@ -95,6 +86,15 @@ int* navigation::rev_heuristic(int origin) {
   return heur;
 }
 
+pf::Move navigation::move_dir(int src, int dest) const {
+  for(auto p : successors(src)) {
+    if(p.second == dest)
+      return p.first;
+  }
+  assert(src == dest);
+  return pf::M_WAIT;
+}
+
 namespace reservation {
 table::table(int map_sz)
   : res_counts(map_sz)
@@ -104,7 +104,7 @@ table::table(int map_sz)
 }
 
 void table::_dec_move(int loc, int t, pf::Move m) {
-  auto cell = res_counts[loc].find(t)->value;
+  auto& cell = (*res_counts[loc].find(t)).value;
   if(!--cell.counts[m]) {
     // Clear a bit.
     if(!reserved.release(m, loc, t))
@@ -120,7 +120,7 @@ void table::_inc_move(int loc, int t, pf::Move m) {
     res_counts[loc].add(t, c);
     reserved.forbid(m, loc, t);
   } else {
-    if(! cell_it->value[m]++ ) {
+    if(! (*cell_it).value[m]++ ) {
       reserved.forbid(m, loc, t);
     }
   }
@@ -219,9 +219,9 @@ simple_pathfinder::cell_ref simple_pathfinder::get(int loc, unsigned t) {
   if(!it) {
     it = m.add(base, cell(loc, base, timestamp));
   } else {
-    it->value.reset(timestamp);
+    (*it).value.reset(timestamp);
   }
-  return cell_ref(&it->value, off);
+  return cell_ref(&(*it).value, off);
 }
 
 template<class Heap>

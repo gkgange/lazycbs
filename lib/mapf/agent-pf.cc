@@ -2,6 +2,9 @@
 // #define EXPLAIN_LATEST
 
 namespace mapf {
+
+#if 0
+
 #ifdef MAPF_BETTER_EXPLANATIONS
 void prune_blockages(vec<Agent_PF::blockage_info>& b) {
   Agent_PF::blockage_info* s(b.begin());
@@ -406,49 +409,12 @@ void Agent_PF::extract_lb_explanation(unsigned int obs_tl, unsigned int lb, vec<
 }
 #endif
 
+#endif
+
+#endif
 bool Agent_PF::check_sat(ctx_t& ctx) {
   return true;
-#if 0
-  std::vector< std::vector<std::pair<int, int> > > local_obstacles;
-  // Walk through all the obstacles, and activate any that are present.
-  int cap(cost.ub(ctx));
-  for(int ii = 0; ii <= cap; ++ii)
-    local_obstacles.push_back(std::list<std::pair<int, int> >());
-
-  for(const obstacle_info& o : obstacles) {
-    int t(o.timestep);
-    if(o.at.lb(ctx)) {
-      // Activated 
-      if(o.tag == O_BARRIER) {
-        const barrier_info& b(o.b);
-        int p = b.pos;
-        int end = std::min(cap + 1, t + b.duration);
-        for(; t < end; ++t) {
-          local_obstacles[t].push_back(std::make_pair(p, -1));
-          p += b.delta;
-        }
-      } else {
-        // Mutex. First check if we're blocking the goal.
-        if(o.p.first == goal_pos && o.p.second == -1 && cap <= t)
-          return false;
-
-        // Otherwise, skip anything later than cap.
-        if(cap <= t)
-          continue;
-        local_obstacles[t].push_back(o.p);
-        if(o.p.second >= 0)
-          local_obstacles[t].push_back(std::make_pair(o.p.second, o.p.first));
-      }
-    }
-  }
-  if(!engine.findPath(1.0, &local_obstacles, nullptr, 0))
-    return false;
-
-  int p_cost = std::ceil(engine.path_cost);
-  return p_cost <= cap;
-#endif
 }
 
-#endif
 
 }

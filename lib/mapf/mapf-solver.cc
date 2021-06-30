@@ -1,36 +1,42 @@
 #include <geas/constraints/builtins.h>
 
 #include <lazycbs/mapf/mapf-solver.h>
+#include <lazycbs/pf/pf.hpp>
 
 #include "compute_heuristic.h"
 
-// #define DEBUG_UC
+#define DEBUG_UC
 // #define MAPF_NO_RECTANGLES
 
 namespace mapf {
 
+/*
 static std::pair<int, bool*> mapf_get_res_table(MAPF_Solver* m, int excl) {
   return m->retrieve_reservation_table(excl);
 }
+*/
 
-MAPF_Solver::MAPF_Solver(const MapLoader& _ml, const AgentsLoader& _al, const EgraphReader& _egr, int UB)
-  : ml(&_ml), al(&_al), egr(&_egr), map_size(ml->rows * ml->cols)
-  , reservation_table(map_size, false), cmap(map_size, -1), nmap(map_size, -1)
-  , agent_set(al->num_of_agents)
+static int map_size(const MapLoader& ml) { return ml.rows  * ml.cols; }
+
+MAPF_Solver::MAPF_Solver(const MapLoader& ml, const AgentsLoader& al, int UB)
+  :
+  /* ml(&_ml), al(&_al), egr(&_egr), map_size(ml->rows * ml->cols) */
+  /* reservation_table(map_size, false), */ cmap(map_size(ml), -1), nmap(map_size(ml), -1)
+  , agent_set(al.num_of_agents)
   , cost_ub(UB)
-  , HL_conflicts(0) {
-
-    int num_of_agents = al->num_of_agents;
+  , HL_conflicts(0)
+  , nav(navigation::of_obstacle_array(ml.cols, ml.rows, ml.get_map(), nav_coords))
+  , coord(s, nav) {
+    int num_of_agents = al.num_of_agents;
     // int map_size = ml->rows*ml->cols;
     cost_lb = 0;
 
     for(int ai = 0; ai < num_of_agents; ++ai) {
-      int init_loc = ml->linearize_coordinate((al->initial_locations[ai]).first, (al->initial_locations[ai]).second);
-      int goal_loc = ml->linearize_coordinate((al->goal_locations[ai]).first, (al->goal_locations[ai]).second);
-      ComputeHeuristic ch(goal_loc, ml->get_map(), map_size, ml->actions_offset, 1, egr);
+      int init_loc = _nav::find_coord(nav_coords, al.initial_locations[ai].first, al.initial_locations[ai].second);
+      int goal_loc = _nav::find_coord(nav_coords, al.goal_locations[ai].first, al.goal_locations[ai].second);
 
       geas::intvar cv(s.new_intvar(0, UB));
-      Agent_PF* pf(new Agent_PF(s.data, cv, init_loc, goal_loc, ch.getHVals(), ml->get_map(), map_size, ml->actions_offset, std::bind(mapf_get_res_table, this, ai)));
+      Agent_PF* pf(new Agent_PF(s.data, coord, cv, init_loc, goal_loc));
       pathfinders.push(pf);
 
       cost_lb += pf->pathCost();
@@ -39,37 +45,6 @@ MAPF_Solver::MAPF_Solver(const MapLoader& _ml, const AgentsLoader& _al, const Eg
     }
 }
 
-// Get the local reservation table for agent excl.
-// This is kind of expensive; find a better way.
-std::pair<int, bool*> MAPF_Solver::retrieve_reservation_table(int excl) {
-  // Get the maximum path length 
-  int frame_sz = ml->rows*ml->cols;
-  int cap = 0;
-  for(int ai = 0; ai < pathfinders.size(); ++ai) {
-    if(ai == excl)
-      continue;
-    cap = std::max(cap, pathfinders[ai]->getPath().size());
-  }
-  // Clear the existing table. This _should_ be safe (assuming sizeof(bool) == 1).
-  std::memset(reservation_table.begin(), 0, reservation_table.size());
-  reservation_table.growTo(frame_sz * cap, false);
-
-  // Now fill it
-  for(int ai = 0; ai < pathfinders.size(); ++ai) {
-    if(ai == excl)
-      continue;
-    int base = 0;
-    for(int p : pathfinders[ai]->getPath()) {
-      reservation_table[base + p] = true;
-      base += frame_sz;
-    }
-    int pE = pathfinders[ai]->getPath().last();
-    for(; base < frame_sz * cap; base += frame_sz)
-      reservation_table[base + pE] = true;
-  }
-
-  return std::make_pair(cap, reservation_table.begin());
-}
 bool apply_penalties(MAPF_Solver& mf) {
    for(MAPF_Solver::penalty& p : mf.penalties)  {
     geas::patom_t at(geas::le_atom(p.p, p.lb));
@@ -80,19 +55,6 @@ bool apply_penalties(MAPF_Solver& mf) {
   }
   return true;
 }
-
-/*
-bool apply_makespan(MAPF_Solver& mf, int lb) {
-   for(Agent_PF* p : pathfinders) {
-    geas::patom_t at(geas::le_atom(p.p, lb));
-    if(!mf.s.assume(at))
-      return false;
-    if(mf.s.is_aborted())
-      throw MAPF_Solver::SolveAborted { };
-  }
-  return true;
-}
-*/
 
 void log_conflict(MAPF_Solver& mapf) {
   for(auto new_conflict : mapf.new_conflicts) {
@@ -106,11 +68,13 @@ void log_conflict(MAPF_Solver& mapf) {
            mapf.row_of(new_conflict.b.e_loc), mapf.col_of(new_conflict.b.e_loc),
            a1, a2);
     } else {
-      fprintf(stderr, "%%%% Adding conflict: [%d, (%d, %d), %d, %d, %d | (%d, %d -> %d, %d) | (%d, %d -> %d, %d) ]\n", new_conflict.timestamp, new_conflict.p.loc1 / mapf.ml->cols, new_conflict.p.loc1 % mapf.ml->cols, new_conflict.p.loc2, new_conflict.a1, new_conflict.a2,
-        mapf.pathfinders[new_conflict.a1]->start_pos / mapf.ml->cols, mapf.pathfinders[new_conflict.a1]->start_pos % mapf.ml->cols,
-        mapf.pathfinders[new_conflict.a1]->goal_pos / mapf.ml->cols, mapf.pathfinders[new_conflict.a1]->goal_pos % mapf.ml->cols,
-        mapf.pathfinders[new_conflict.a2]->start_pos / mapf.ml->cols, mapf.pathfinders[new_conflict.a2]->start_pos % mapf.ml->cols,
-        mapf.pathfinders[new_conflict.a2]->goal_pos / mapf.ml->cols, mapf.pathfinders[new_conflict.a2]->goal_pos % mapf.ml->cols);
+      const Agent_PF* pf1 = mapf.pathfinders[new_conflict.a1];
+      const Agent_PF* pf2 = mapf.pathfinders[new_conflict.a2];
+      fprintf(stderr, "%%%% Adding conflict: [%d, (%d, %d), %s, %d, %d | (%d, %d -> %d, %d) | (%d, %d -> %d, %d) ]\n", new_conflict.timestamp, mapf.row_of(new_conflict.p.loc), mapf.col_of(new_conflict.p.loc), pf::move_str(new_conflict.p.move), new_conflict.a1, new_conflict.a2,
+              mapf.row_of(pf1->start_pos), mapf.col_of(pf1->start_pos),
+              mapf.row_of(pf1->goal_pos), mapf.col_of(pf1->goal_pos),
+              mapf.row_of(pf2->start_pos), mapf.col_of(pf2->start_pos),
+              mapf.row_of(pf2->goal_pos), mapf.col_of(pf2->goal_pos));
     }
   }
 }
@@ -200,9 +164,11 @@ void MAPF_Solver::printStats(FILE* f) const {
   int LL_num_expanded = 0;
   int LL_executions = 0;
   for(Agent_PF* p : pathfinders) {
+    /*
     LL_num_generated += p->num_generated;
     LL_num_expanded += p->num_expanded;
     LL_executions += p->num_executions;
+    */
   }
   fprintf(f, "%d ; %d ; %d ; %d ; %d ; %d", cost_lb, s.data->stats.conflicts, LL_num_expanded, LL_num_generated, HL_conflicts, LL_executions);
   // std::cout << cost_lb << " ; " << s.data->stats.conflicts << " ; " << LL_num_expanded << " ; " << LL_num_generated << " ; " << HL_conflicts << " ; " << LL_executions;
@@ -210,10 +176,13 @@ void MAPF_Solver::printStats(FILE* f) const {
 
 void MAPF_Solver::printPaths(FILE* f) const {
   for(int ai = 0; ai < pathfinders.size(); ++ai) {
-    fprintf(f, "Agent %d:", ai);
-    for(int loc : pathfinders[ai]->getPath()) {
+    assert(ai == pathfinders[ai]->agent_id);
+    int loc = coord.plans[ai].origin;
+    fprintf(f, "Agent %d: (%d, %d)", ai, row_of(loc)-1, col_of(loc)-1);
+    for(pf::Step step : coord.get_path(ai)) {
       // fprintf(f, " %d", loc);
-      fprintf(f, " (%d,%d)", row_of(loc)-1, col_of(loc)-1);
+      loc = coord.nav.delta[loc][step.second];
+      fprintf(f, " %d:(%d,%d)", step.first, row_of(loc)-1, col_of(loc)-1);
     }
     fprintf(f, "\n");
   }
@@ -239,6 +208,7 @@ int MAPF_Solver::maxPathLength(void) const {
 // Exactly as for the normal MAPF solver, check the current
 // 'incumbent' for conflicts.
 // FIXME: This is wasteful; use a sparse representation.
+/*
 inline int agentPosition(Agent_PF* p, int t) {
   const vec<int>& P(p->getPath());
   return (t < P.size()) ? P[t] : P.last();
@@ -249,6 +219,7 @@ inline void clear_map(MAPF_Solver* s, vec<int>& map, int t) {
     map[agentPosition(p, t)] = -1;
   }
 }
+*/
 
 /*
 void MAPF_Solver::printMonotoneSubchain(int dy, int dx, int ai, int t) {
@@ -311,6 +282,8 @@ void MAPF_Solver::printMonotoneSubchain(int dy, int dx, int ai, int t) {
 }
 */
 int MAPF_Solver::monotoneSubchainStart(int dy, int dx, int ai, int t) const {
+  assert(0); // FIXME
+  /*
   int p(agentPosition(pathfinders[ai], t));
   for(--t; t >= 0; --t) {
     int q(agentPosition(pathfinders[ai], t));
@@ -322,10 +295,13 @@ int MAPF_Solver::monotoneSubchainStart(int dy, int dx, int ai, int t) const {
       return t+1;
     p = q; 
   }
+  */
   return 0;
 }
 
 int MAPF_Solver::monotoneSubchainEnd(int dy, int dx, int ai, int t) const {
+  assert(0); // FIXME
+  /*
   int p(agentPosition(pathfinders[ai], t));
   int tMax(pathfinders[ai]->getPath().size());
   for(++t; t < tMax; ++t) {
@@ -339,20 +315,38 @@ int MAPF_Solver::monotoneSubchainEnd(int dy, int dx, int ai, int t) const {
     p = q; 
   }
   return tMax-1;
+  */
+  return INT_MAX;
 }
 
 bool MAPF_Solver::resolveConflicts(void) {
+  // FIXME
+  #if 0
   int pMax = maxPathLength();
   
   vec<bool> conflicting(pathfinders.size(), false);
 
+  vec<int> agent_loc;
+  vec<pf::Step*> path_iter;
+  vec<pf::Step*> path_end;
+  int Tnext = INT_MAX;
+
   for(int ai = 0; ai < pathfinders.size(); ++ai) {
-    int loc = pathfinders[ai]->getPath()[0];
+    int loc = pathfinders[ai]->start_pos;
+    const pf::Path& path(pathfinders[ai]->getPath());
+    agent_loc.push(loc);
+    path_iter.push(path.begin());
+    path_end.push(path.end());
+    Tnext = std::max(Tnext, path.begin()->first);
+    
     assert(nmap[loc] < 0); // Shouldn't be any conflicts at t0.
     nmap[loc] = ai;
   }
+
   // Run through the candidate plan, identify agents with conflicts.
-  for(int t = 1; t <= pMax; ++t) {
+  while(Tnext < INT_MAX) {
+    int t = Tnext;
+    Tnext = INT_MAX;
     std::swap(cmap, nmap);
 
     for(int ai = 0; ai < pathfinders.size(); ++ai) {
@@ -385,154 +379,80 @@ bool MAPF_Solver::resolveConflicts(void) {
       pathfinders[ai]->find_bypass();
     }
   }
+  #endif
   return !checkForConflicts();
 }
 
-#if 0
-bool MAPF_Solver::checkForConflicts(void) {
-  int pMax = maxPathLength();
-  
-  for(int ai = 0; ai < pathfinders.size(); ++ai) {
-    int loc = pathfinders[ai]->getPath()[0];
-    assert(nmap[loc] < 0); // Shouldn't be any conflicts at t0.
-    nmap[loc] = ai;
-  }
-  for(int t = 1; t < pMax; ++t) {
-    std::swap(cmap, nmap);
-
-    for(int ai = 0; ai < pathfinders.size(); ++ai) {
-      int loc = agentPosition(pathfinders[ai], t);
-      if(nmap[loc] >= 0) {
-        // Already occupied.
-        int aj(nmap[loc]);
-        int dy1 = row_of(agentPosition(pathfinders[ai], t)) - row_of(agentPosition(pathfinders[ai], t-1));
-        int dx1 = col_of(agentPosition(pathfinders[ai], t)) - col_of(agentPosition(pathfinders[ai], t-1));
-        int dy2 = row_of(agentPosition(pathfinders[aj], t)) - row_of(agentPosition(pathfinders[aj], t-1));
-        int dx2 = col_of(agentPosition(pathfinders[aj], t)) - col_of(agentPosition(pathfinders[aj], t-1));
-#ifdef MAPF_NO_RECTANGLES
-        goto fallback;
-#endif
-        if(dx1 != dx2 && dy1 != dy2) {
-          // This is a rectangle conflict
-          int dy(dy1 + dy2);
-          int dx(dx1 + dx2);
-          
-          // Make sure ai is the horizontal agent.
-          if(dx2)
-            std::swap(ai, aj);
-
-          // Find the start positions
-          int stH(monotoneSubchainStart(dy, dx, ai, t));
-          int stV(monotoneSubchainStart(dy, dx, aj, t));
-          
-          int sH(agentPosition(pathfinders[ai], stH));
-          int sV(agentPosition(pathfinders[aj], stV));
-
-          // If there is overhang, adjust the locations.
-          while(true) {
-            if(dx * (col_of(sV) - col_of(sH)) < 0) {
-              ++stV;     
-              sV = agentPosition(pathfinders[aj], stV);
-              continue;
-            }
-            if(dy * (row_of(sH) - row_of(sV)) < 0) {
-              ++stH;
-              sH = agentPosition(pathfinders[ai], stH); 
-              continue;
-            }
-            break;
-          }
-
-          int etH(monotoneSubchainEnd(dy, dx, ai, t));
-          int etV(monotoneSubchainEnd(dy, dx, aj, t));
-
-          int eH(agentPosition(pathfinders[ai], etH));
-          int eV(agentPosition(pathfinders[aj], etV));
-
-          while(true) {
-            if(dx * (col_of(eH) - col_of(eV)) < 0) {
-              --etV;
-              eV = agentPosition(pathfinders[aj], etV);
-              continue;
-            }
-            if(dy * (row_of(eV) - row_of(eH)) < 0) {
-              --etH;
-              eH = agentPosition(pathfinders[ai], etH);
-              continue;
-            }
-            break;
-          }
-          assert(stH <= t);
-          assert(stV <= t);
-          assert(t <= etH);
-          assert(t <= etV);
-          assert(dy * (row_of(sH) - row_of(sV)) >= 0);
-          assert(dx * (col_of(sV) - col_of(sH)) >= 0);
-          assert(dy * (row_of(eV) - row_of(eH)) >= 0);
-          assert(dx * (col_of(eH) - col_of(eV)) >= 0);
-           
-          int locS(ml->linearize_coordinate(row_of(sV), col_of(sH)));
-          int locE(ml->linearize_coordinate(row_of(eV), col_of(eH)));
-          int t0(stH - abs(row_of(sH) - row_of(locS)));
-          assert(t0 == stV - abs(col_of(sV) - col_of(locS)));
-          new_conflicts.push(conflict::barrier(t0, ai, aj, locS, locE));
-        } else {
-#ifdef MAPF_NO_RECTANGLES
-        fallback:
-#endif
-          new_conflicts.push(conflict(t, ai, nmap[loc], loc, -1));
-        }
-
-        clear_map(this, cmap, t-1);
-        clear_map(this, nmap, t);
-        return true;
-      }
-      nmap[loc] = ai;
-      if(cmap[loc] > 0 && cmap[loc] != ai) {
-        // Get the new location of the agent we're replacing.
-        int rloc = agentPosition(pathfinders[cmap[loc]], t);
-        if(cmap[rloc] == ai) {
-          // Edge conflict
-          new_conflicts.push(conflict(t-1, ai, cmap[loc], loc, rloc));
-          clear_map(this, cmap, t-1);
-          clear_map(this, nmap, t);
-          return true;
-        }
-      }
-    }
-    // Now we zero out the previous cmap.
-    clear_map(this, cmap, t-1);
-  }
-  clear_map(this, nmap, pMax-1);
-
-  return false;
+template<class T>
+void clear_map(const T& agents, const vec<int>& loc, vec<int>& map) {
+  for(int ai : agents)
+    map[loc[ai]] = -1;
 }
-#else
+
+void clear_map(const vec<int>& loc, vec<int>& map) {
+  for(int ii = 0; ii < loc.size(); ++ii)
+    map[loc[ii]] = -1;
+}
+
 // Multiple-conflict handling
 bool MAPF_Solver::checkForConflicts(void) {
   int pMax = maxPathLength();
   
+  vec<int> prev_loc;
+  vec<int> curr_loc;
+
+  vec<pf::Step*> path_it;
+  vec<pf::Step*> path_en;
+
+  int Tnext = INT_MAX;
   for(int ai = 0; ai < pathfinders.size(); ++ai) {
-    int loc = pathfinders[ai]->getPath()[0];
+    int loc = coord.plans[ai].origin;
+    const pf::Path& path(coord.get_path(ai));
+
     assert(nmap[loc] < 0); // Shouldn't be any conflicts at t0.
+    curr_loc.push(loc);
+    prev_loc.push(loc);
     nmap[loc] = ai;
+
+    auto it = path.begin();
+    auto en = path.end();
+    if(it != en)
+      Tnext = std::min(Tnext, it->first);
+    path_it.push(it);
+    path_en.push(en);
   }
+
   // All agents are interesting.
   agent_set.sz = pathfinders.size();
 
-  for(int t = 1; t <= pMax; ++t) {
+  while(Tnext < INT_MAX) {
+    int t = Tnext;
+    Tnext = INT_MAX;
+
+    std::swap(prev_loc, curr_loc);
     std::swap(cmap, nmap);
 
     // for(int ai = 0; ai < pathfinders.size(); ++ai) {
     for(int ai : agent_set.rev()) {
-      int loc = agentPosition(pathfinders[ai], t);
+      int loc;
+      if(path_it[ai] != path_en[ai] && path_it[ai]->first == t) {
+        loc = nav.delta[prev_loc[ai]][path_it[ai]->second];
+        ++path_it[ai];
+      } else {
+        loc = prev_loc[ai];
+      }
+      if(path_it[ai] != path_en[ai])
+        Tnext = std::min(Tnext, path_it[ai]->first);
+      curr_loc[ai] = loc;
+      
       if(nmap[loc] >= 0) {
+        /*
         // Already occupied.
         int aj(nmap[loc]);
-        int dy1 = row_of(agentPosition(pathfinders[ai], t)) - row_of(agentPosition(pathfinders[ai], t-1));
-        int dx1 = col_of(agentPosition(pathfinders[ai], t)) - col_of(agentPosition(pathfinders[ai], t-1));
-        int dy2 = row_of(agentPosition(pathfinders[aj], t)) - row_of(agentPosition(pathfinders[aj], t-1));
-        int dx2 = col_of(agentPosition(pathfinders[aj], t)) - col_of(agentPosition(pathfinders[aj], t-1));
+        int dy1 = row_of(loc) - row_of(prev_loc[ai]);
+        int dx1 = col_of(loc) - col_of(prev_loc[ai]);
+        int dy2 = row_of(loc) - row_of(prev_loc[aj]);
+        int dx2 = col_of(loc) - col_of(prev_loc[aj]);
 #ifdef MAPF_NO_RECTANGLES
         goto fallback;
 #endif
@@ -546,6 +466,7 @@ bool MAPF_Solver::checkForConflicts(void) {
             std::swap(ai, aj);
 
           // Find the start positions
+          // FIXME==============
           int stH(monotoneSubchainStart(dy, dx, ai, t));
           int stV(monotoneSubchainStart(dy, dx, aj, t));
           
@@ -606,22 +527,31 @@ bool MAPF_Solver::checkForConflicts(void) {
 #endif
           new_conflicts.push(conflict(t, ai, nmap[loc], loc, -1));
         }
+        */
+        // FIXME: Re-introduce rectangles/barriers.
+        new_conflicts.push(conflict(t, ai, nmap[loc], pf::M_WAIT, loc));
 
-        clear_map(this, cmap, t-1);
-        clear_map(this, nmap, t);
+        clear_map(agent_set, prev_loc, cmap);
+        clear_map(agent_set, curr_loc, nmap);
         agent_set.remove(ai);
         // return true;
         continue;
       }
       nmap[loc] = ai;
+    }
+
+    for(int ai : agent_set.rev()) {
+      // Now check the edge constraints.
+      int loc = curr_loc[ai];
       if(cmap[loc] > 0 && cmap[loc] != ai) {
         // Get the new location of the agent we're replacing.
-        int rloc = agentPosition(pathfinders[cmap[loc]], t);
+        int rloc = curr_loc[cmap[loc]];
         if(cmap[rloc] == ai) {
           // Edge conflict
-          new_conflicts.push(conflict(t-1, ai, cmap[loc], loc, rloc));
-          clear_map(this, cmap, t-1);
-          clear_map(this, nmap, t);
+          // new_conflicts.push(conflict(t-1, ai, cmap[loc], loc, rloc));
+          new_conflicts.push(conflict(t, ai, cmap[loc], coord.nav.move_dir(loc, rloc), loc));
+          clear_map(agent_set, prev_loc, cmap);
+          clear_map(agent_set, curr_loc, nmap);
           agent_set.remove(ai);
           // return true;
           continue;
@@ -629,23 +559,24 @@ bool MAPF_Solver::checkForConflicts(void) {
       }
     }
     // Now we zero out the previous cmap.
-    clear_map(this, cmap, t-1);
+    clear_map(agent_set, prev_loc, cmap);
   }
-  clear_map(this, nmap, pMax);
+  clear_map(agent_set, curr_loc, nmap);
 
   return new_conflicts.size() > 0;
 }
 
-#endif
-
 bool MAPF_Solver::checkBarrierViolated(int ai, int t, int p, int delta, int dur) const {
   assert(t >= 0);
+  /*
   const vec<int>& P(pathfinders[ai]->getPath());
   for(int dt = 0; dt < dur; ++dt, ++t) {
     if(P[t] == p)
       return true;
     p += delta;
   }
+  */
+  assert(0);
   return false;
 }
 
@@ -655,7 +586,8 @@ static int barrier_dy[4] = { -1, 0, 1, 0 };
 
 geas::patom_t MAPF_Solver::getBarrier(int ai, BarrierDir dir, int t, int p, int dur) {
   // If this barrier is trivially violated, just return F.
-  int delta = ml->cols * barrier_dy[dir] + barrier_dx[dir];
+  /*
+  int delta = ml.cols * barrier_dy[dir] + barrier_dx[dir];
   assert(t >= 0);
   if(t == 0 && p == pathfinders[ai]->engine.start_location)
     return geas::at_False;
@@ -721,12 +653,17 @@ geas::patom_t MAPF_Solver::getBarrier(int ai, BarrierDir dir, int t, int p, int 
   pathfinders[ai]->register_barrier(act, t, p, delta, dur); 
   candidates.push(barrier_data { act, t, dur });
   return act;
+  */
+  assert(0);
+  return at_Undef;
 }
 
 bool MAPF_Solver::addConflict(void) {
   HL_conflicts++;
   for(auto new_conflict : new_conflicts) {
     if(new_conflict.type == C_BARRIER) {
+      assert(0);
+#if 0
       int aH(new_conflict.a1);
       int aV(new_conflict.a2);
       int p_s(new_conflict.b.s_loc);
@@ -821,13 +758,18 @@ bool MAPF_Solver::addConflict(void) {
         add_clause(s.data, s1, e1, s2, e2);
       }
         */
+#endif
     } else {
-      int loc1 = new_conflict.p.loc1;
-      int loc2 = new_conflict.p.loc2;
-      if(loc2 > loc1)
-        std::swap(loc1, loc2);
+      int loc = new_conflict.p.loc;
+      pf::Move move = new_conflict.p.move;
+      // Normalize. This should work fine for
+      // M_WAIT (vertex) constraints too.
+      if(loc > coord.nav.delta[loc][move]) {
+        loc = coord.nav.delta[loc][move];
+        move = pf::move_inv(move);
+      }
         
-      cons_key k { new_conflict.timestamp, loc1, loc2 };
+      cons_key k { new_conflict.timestamp, move, loc };
       auto it(cons_map.find(k));
        
       int idx;
@@ -846,14 +788,14 @@ bool MAPF_Solver::addConflict(void) {
         patom_t at(c.sel != a1);
         while(s.level() > 0 && at.lb(s.data->ctx()))
           s.backtrack();
-        pathfinders[a1]->register_obstacle(at, k.timestamp, k.loc1, k.loc2);
+        pathfinders[a1]->register_obstacle(at, k.timestamp, k.move, k.loc);
         c.attached.insert(a1);
       }
       if(!c.attached.elem(a2)) {
         patom_t at(c.sel != a2);
         while(s.level() > 0 && at.lb(s.data->ctx()))
           s.backtrack();
-        pathfinders[a2]->register_obstacle(at, k.timestamp, k.loc1, k.loc2);
+        pathfinders[a2]->register_obstacle(at, k.timestamp, k.move, k.loc);
         c.attached.insert(a2);
       }
       // FIXME: Abstract properly
@@ -906,34 +848,16 @@ bool MAPF_Solver::processCore(vec<geas::patom_t>& core) {
 }
 
 bool MAPF_Solver::runUCIter(void) {
-  /*
-  for(penalty& p : penalties)  {
-    geas::patom_t at(geas::le_atom(p.p, p.lb));
-    if(!s.assume(at))
-      return false;
-    if(s.is_aborted())
-      throw SolveAborted { };
-  }
-  */
-
-//retry:
   switch(s.solve()) {
     // No solution, we've got a new core.
     case geas::solver::UNSAT:
       return false;
     // Candidate optimal solution. Check for conflicts
     case geas::solver::SAT:  
-      // extractPaths();
-      //if(!checkForConflicts())
         return true;
-      //if(!addConflict())
-      //  return false;
-      //goto retry;
     case geas::solver::UNKNOWN:
       throw SolveAborted { };
-      // GEAS_ERROR;
   }
-  // UNREACHABLE
   return false;
 }
 

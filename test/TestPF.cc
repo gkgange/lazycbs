@@ -50,7 +50,7 @@ int main(int argc, char** argv) {
   int* heur = nav.fwd_heuristic(3); 
   int* rheur = nav.rev_heuristic(1);
 
-  mapf::sipp_ctx sctx(nav);
+  mapf::sipp_ctx sctx(nav.size());
 
   int sz = nav.size();
   /*

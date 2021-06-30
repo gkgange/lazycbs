@@ -19,6 +19,7 @@ struct pf {
 
     NUM_MOVES
   };
+
   enum Constraint {
     // Edge constraints
     C_NONE = 0,
@@ -30,6 +31,40 @@ struct pf {
   typedef vec<Step> Path;
 
   static int path_cost(const Path& path) { return path.last().first; }
+
+  /*
+  static const Move move_inv[] = {
+    M_LEFT,
+    M_RIGHT,
+    M_UP,
+    M_DOWN,
+    M_WAIT,
+    NUM_MOVES
+  };
+  */
+  inline static Move move_inv(Move m) {
+    static const Move _move_inv[] = {
+        M_LEFT,
+        M_RIGHT,
+        M_UP,
+        M_DOWN,
+        M_WAIT,
+        NUM_MOVES
+    };
+    return _move_inv[m];
+  }
+
+  inline static const char* move_str(Move m) {
+    static const char* _move_str[] = {
+      "LEFT",
+      "RIGHT",
+      "UP",
+      "DOWN",
+      "WAIT",
+      "<NUM_MOVES>"
+    };
+    return _move_str[m];
+  }
 };
 
 struct constraints {
@@ -87,12 +122,14 @@ struct navigation {
 
   int size(void) const { return succ.size(); }
   
-  int* fwd_heuristic(int dest);
-  int* rev_heuristic(int src);
+  int* fwd_heuristic (int dest) const;
+  int* rev_heuristic (int src) const;
 
   const adj_list& successors(int loc) const { return succ[loc]; }
   const adj_list& predecessors(int loc) const { return pred[loc]; }
 
+  pf::Move move_dir(int pred, int succ) const;
+  
   vec<adj_list> succ;
   vec<adj_list> pred;
   vec<transition> delta; // loc -> move -> succ(loc, move)

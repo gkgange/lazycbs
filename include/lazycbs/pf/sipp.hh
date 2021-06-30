@@ -57,7 +57,7 @@ struct sipp_loc {
 };
 
 struct sipp_ctx {
-  sipp_ctx(const navigation& nav);
+  sipp_ctx(int size);
   ~sipp_ctx(void) { delete[] ptr; }
 
   void forbid(pf::Move m, unsigned loc, int time);
@@ -109,7 +109,8 @@ struct sipp_pathfinder {
   };
 
   sipp_pathfinder(const navigation& _nav)
-    : nav(_nav), heap(sipp_env()), timestamp(0) { }
+    : nav(_nav), heap(sipp_env()), timestamp(0)
+    , LL_searches(0), LL_generated(0), LL_expanded(0) { }
 
   inline sipp_loc& get(unsigned loc) const {
     if(timestamp != state[loc].timestamp)
@@ -118,6 +119,8 @@ struct sipp_pathfinder {
   }
 
   int search(int origin, int goal, sipp_ctx& state, int* heur,
+             const constraints& reserved);
+  int search_upto(int origin, int goal, int ub, sipp_ctx& state, int* heur,
              const constraints& reserved);
 
   // Parameters
@@ -132,6 +135,11 @@ struct sipp_pathfinder {
   sipp_loc* state;
 
   int timestamp;
+
+  // Stats tracking
+  int LL_searches;
+  int LL_generated;
+  int LL_expanded;
 };
 
 class sipp_explainer {

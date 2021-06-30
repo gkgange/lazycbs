@@ -8,6 +8,9 @@
 #include <geas/solver/solver.h>
 #include <geas/utils/bitset.h>
 
+#include <lazycbs/pf/pf.hh>
+#include <lazycbs/pf/sipp.hh>
+
 #include <lazycbs/mapf/coordinator.h>
 #include <lazycbs/mapf/agent-pf.h>
 
@@ -24,21 +27,21 @@ class MAPF_Solver {
   
   struct cons_key {
     int timestamp;
-    int loc1;
-    int loc2;
+    pf::Move move;
+    int loc;
   };
   struct cons_key_hasher {
     size_t operator()(const cons_key& k) const {
       size_t h(5331);
       h = ((h<<5) + k.timestamp)^h;
-      h = ((h<<5) + k.loc1)^h;
-      h = ((h<<5) + k.loc2)^h;
+      h = ((h<<5) + k.move)^h;
+      h = ((h<<5) + k.loc)^h;
       return h;
     }
   };
   struct cons_key_eq {
     bool operator()(const cons_key& x, const cons_key& y) const {
-      return x.timestamp == y.timestamp && x.loc1 == y.loc1 && x.loc2 == y.loc2;
+      return x.timestamp == y.timestamp && x.move == y.move && x.loc == y.loc;
     }
   };
     
@@ -80,9 +83,9 @@ class MAPF_Solver {
   struct conflict {
     conflict(void) { }
 
-    conflict(int _timestamp, int _a1, int _a2, int _loc1, int _loc2)
+  conflict(int _timestamp, int _a1, int _a2, pf::Move _move, int _loc)
       : timestamp(_timestamp), type(C_MUTEX)
-      , a1(_a1), a2(_a2), p({_loc1, _loc2}) { }
+      , a1(_a1), a2(_a2), p{_move, _loc} { }
 
     conflict(int _timestamp, int _a1, int _a2, int _loc1, int _loc2, bool dummy)
       : timestamp(_timestamp), type(C_BARRIER)
@@ -106,8 +109,8 @@ class MAPF_Solver {
      
     union {
       struct {
-        int loc1;
-        int loc2;
+        pf::Move move;
+        int loc;
       } p;
       barrier_info b;
     };
@@ -118,22 +121,30 @@ class MAPF_Solver {
     btset::bitset attached; // Which agents are already attached?
   };
 
-  MAPF_Solver(const MapLoader& ml, const AgentsLoader& al, const EgraphReader& egr, int cost_ub);
+  MAPF_Solver(const MapLoader& ml, const AgentsLoader& al, int cost_ub);
 
   // Problem information
+  /*
   const MapLoader* ml;
   const AgentsLoader* al;
   const EgraphReader* egr;
   const int map_size;
+  */
 
   // Solver engine
   geas::solver s;
+
+  vec< std::pair<int, int> > nav_coords;
+  navigation nav;
+
+  coordinator coord;
 
   // Single-agent search engines
   vec<Agent_PF*> pathfinders;
 
   // For conflict checking
-  vec<bool> reservation_table;
+  // vec<bool> reservation_table;
+  // Now handled by the coordinator.
   vec<int> cmap; // Map at the current time
   vec<int> nmap; // Map at the next time
 
@@ -155,8 +166,8 @@ class MAPF_Solver {
   // How many high-level conflicts have been processed?
   int HL_conflicts;
 
-  inline int row_of(int loc) const { return loc / ml->cols; }
-  inline int col_of(int loc) const { return loc % ml->cols; }
+  inline int row_of(int loc) const { return nav_coords[loc].first; }
+  inline int col_of(int loc) const { return nav_coords[loc].second; }
 
   int maxPathLength(void) const;
 
@@ -179,8 +190,6 @@ class MAPF_Solver {
 
   int monotoneSubchainStart(int dy, int dx, int ai, int t) const;
   int monotoneSubchainEnd(int dy, int dx, int ai, int t) const;
-
-  std::pair<int, bool*> retrieve_reservation_table(int ai);
 
   ~MAPF_Solver();
 };

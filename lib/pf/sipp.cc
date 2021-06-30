@@ -18,8 +18,8 @@ sipp_loc::sipp_loc(void)
   i.push(sipp_interval(INT_MAX-1, pf::C_VERT));
 }
 
-sipp_ctx::sipp_ctx(const navigation& nav)
-  : ptr(new sipp_loc[nav.size()]), timestamp(0)
+sipp_ctx::sipp_ctx(int size)
+  : ptr(new sipp_loc[size]), timestamp(0)
 { }
 
 
@@ -105,6 +105,8 @@ sipp_interval* sipp_loc::reach(int t) const {
 
 int sipp_pathfinder::search(int origin, int goal, sipp_ctx& ctx, int* heur,
                             const constraints& reserved) {
+  ++LL_searches;
+
   // Set up parameters
   heap.clear();
   state = ctx.ptr;
@@ -124,6 +126,8 @@ int sipp_pathfinder::search(int origin, int goal, sipp_ctx& ctx, int* heur,
   while(!heap.empty()) {
     IntId curr = heap.top();
     heap.pop();
+    ++LL_expanded;
+
     // Don't need to use get(), because curr.loc should already
     // be initialized.
     sipp_loc& curr_loc(state[curr.loc]);
@@ -195,18 +199,44 @@ int sipp_pathfinder::search(int origin, int goal, sipp_ctx& ctx, int* heur,
       // We _should_ still be the top.
       // FIXME: Deal with conflicts on waits.
       sipp_interval& wait(curr_loc[curr.idx+1]);
+      unsigned char w_second = std::min(127, second + reserved.score(pf::M_WAIT, curr.loc, wait.start));
       if(wait.reach < curr_loc.Tend
-         && wait.start < wait.reach
+         && (wait.start < wait.reach || w_second < wait.second)
          && !wait.may_wait()) {
         IntId wait_id(curr.loc, curr.idx+1);
         wait.pred = pf::M_WAIT;
         wait.reach = wait.next_ex = wait.start;
+        wait.second = w_second;
         heap.insert_or_decrease(wait_id);
       }
     }
   }
   return INT_MAX;
 }
+
+// UGH. This is slightly awkward. For this we really do want to take into account
+// conflicts which cross an interval.
+#if 0
+bool sipp_pathfinder::search_upto(int origin, int goal, int cost_ub, sipp_ctx& ctx, int* heur,
+                            const constraints& reserved) {
+  ++LL_searches;
+
+  // Set up parameters
+  heap.clear();
+  state = ctx.ptr;
+  heap.env.ctx = ctx.ptr;
+  heap.env.heur = heur;
+  timestamp = ++ctx.timestamp;
+
+  // Find the goal index.
+  int goal_idx = find_goal_index(get(goal));
+  if(get(goal)[goal_idx].start > cost_ub)
+    return false;
+
+  assert(0 && "TODO: Implement sipp_pathfinder::search_upto");
+  return false;
+}
+#endif
 
 void sipp_explainer::explain(int origin, int goal, int Tub, sipp_ctx& state,
                              int* heur, int* r_heur, vec<cst>& out_expl) {
