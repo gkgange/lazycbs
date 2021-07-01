@@ -22,7 +22,7 @@ class Agent_PF : public propagator, public prop_inst<Agent_PF> {
   enum ObstacleType { O_MUTEX, O_BARRIER };
   struct barrier_info {
     int pos; // Barrier position at the start time
-    int delta; // Difference between successive barrier positions
+    pf::Move dir; // Difference between successive barrier positions
     int duration; // How long does the barrier hold?
   };
   struct mutex_info {
@@ -32,8 +32,8 @@ class Agent_PF : public propagator, public prop_inst<Agent_PF> {
   struct obstacle_info {
   obstacle_info(patom_t _at, int _timestep, int loc, pf::Move move)
   : at(_at), timestep(_timestep), tag(O_MUTEX), p({ loc, move }) { }
-    obstacle_info(patom_t _at, int _timestep, int loc, int delta, int duration)
-      : at(_at), timestep(_timestep), tag(O_BARRIER), b({ loc, delta, duration}) { }
+  obstacle_info(patom_t _at, int _timestep, int loc, pf::Move move, int duration)
+      : at(_at), timestep(_timestep), tag(O_BARRIER), b({ loc, move, duration}) { }
     patom_t at;
     int timestep;
     ObstacleType tag;
@@ -95,20 +95,17 @@ class Agent_PF : public propagator, public prop_inst<Agent_PF> {
   // looking at obs_tl.
   void revert_barrier(int t, const barrier_info& b) {
     assert(0);
-    #if 0
-#if 0
-    int end = t + b.duration;
-    for(; t < end; ++t)
-      active_obstacles[t].pop_back();
-#else
+    /*
     int p = b.pos;
-    int end = t + b.duration;
-    for(; t < end; ++t) {
-      active_obstacles[p].pop_back(); 
-      p += b.delta;
+    while(t < end) {
+      // Ugh. Need to make sure we don't double-release
+      // a location.
+      sctx.release(pf::M_VERT, p, t);
+      int pred = p;
+      p = coord.nav.delta[p][b.move];
+      t += coord.nav.dist(pred, p);
     }
-#endif
-    #endif
+    */
   }
 
   void restore_stack(void) {
@@ -134,6 +131,9 @@ class Agent_PF : public propagator, public prop_inst<Agent_PF> {
 #if 0
     int p = b.pos;
     int end = t + b.duration;
+    while(t < end) {
+      sctx.release(pf::M_VERT, p, t);
+    }
     for(; t < end; ++t) {
 #if 0
       active_obstacles[t].push_back(std::make_pair(p, -1));
@@ -144,10 +144,12 @@ class Agent_PF : public propagator, public prop_inst<Agent_PF> {
     }
 #endif
   }
+
   void apply_obstacle(int ci) {
     // Make sure we're starting from a consistent state.
     if(obs_tl < obs_stack.size())
       restore_stack();
+    assert(obs_tl == obs_stack.size());
     
     // Then apply the new obstacle.
     const obstacle_info& o(obstacles[ci]);
@@ -163,12 +165,14 @@ class Agent_PF : public propagator, public prop_inst<Agent_PF> {
     }
   }
 
+  // The first step not before t.
   static int get_path_index(const pf::Path& path, int t) {
     auto it = std::lower_bound(path.begin(), path.end(),
                                t, [](pf::Step s, int t) { return s.first < t; });
     return it - path.begin();
   }
-  
+
+ 
   bool incumbent_conflicts_with(int ci) {
     update_incumbent();
 
@@ -191,20 +195,21 @@ class Agent_PF : public propagator, public prop_inst<Agent_PF> {
       int idx = get_path_index(path, o.timestep);
 
       pf::Step step(idx < path.size() ? path[idx] : std::make_pair(INT_MAX, pf::M_WAIT));
-
-      // Edge constraints only trigger at the moment of transition.
-      if(step.first != o.timestep && o.p.move != pf::M_WAIT)
-        return false;
-
       int loc = coord.nav.delta[incumbent[idx]][step.second];
+
       // First, check vertex constraints.
       if(o.p.move == pf::M_WAIT && loc == o.p.loc)
         return true;
+
+      // Edge constraints only trigger at the moment of transition.
+      if(step.first != o.timestep)
+        return false;
+
       // Check forward direction. Started somewhere, moved
       // in constraint direction, landed at constraint location.
-      if(path[idx].second == o.p.move &&
-         loc == o.p.loc)
+      if(path[idx].second == o.p.move && loc == o.p.loc)
         return true;
+      
       // Otherwise, we started from the constraint location,
       // and moved in the inverse direction.
       if(path[idx].second == pf::move_inv(o.p.move)
@@ -275,10 +280,10 @@ public:
     return ci;
   }
 
-  int register_barrier(patom_t at, int timestep, int loc, int delta, int duration) {
+  int register_barrier(patom_t at, int timestep, int loc, pf::Move move, int duration) {
     int ci(obstacles.size()); 
     // Add the new constraint to the pool
-    obstacles.push(obstacle_info(at, timestep, loc, delta, duration));
+    obstacles.push(obstacle_info(at, timestep, loc, move, duration));
     // And make sure the propagator wakes up when becomes set.
     attach(s, at, watch<&P::wake_obstacle>(ci, Wt_IDEM));
     return ci;
@@ -286,7 +291,11 @@ public:
 
   bool propagate(vec<clause_elt>& confl) {
     has_bypass = 0;
-    assert(obs_stack.size() == obs_tl);
+    // assert(obs_stack.size() == obs_tl);
+    assert(obs_tl <= obs_stack.size());
+    if(obs_tl < obs_stack.size())
+      restore_stack();
+
     coord.hide_agent(agent_id);
     int pathC = coord.sipp_pf.search(start_pos, goal_pos,
                                      sctx, f_heur, coord.res_table.reserved);

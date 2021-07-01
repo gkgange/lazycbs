@@ -133,6 +133,7 @@ int sipp_pathfinder::search(int origin, int goal, sipp_ctx& ctx, int* heur,
     sipp_loc& curr_loc(state[curr.loc]);
     sipp_interval& curr_itv(curr_loc[curr.idx]);
     // fprintf(stderr, "%% Popping: %d : %d (%d).\n", curr.loc, curr.idx, curr_itv.reach);
+    assert(! (curr_itv.constraints & pf::C_VERT) );
 
     // Check for goal location.
     // We do it here, in case we might arrive at the goal
@@ -186,23 +187,23 @@ int sipp_pathfinder::search(int origin, int goal, sipp_ctx& ctx, int* heur,
           heap.insert_or_decrease(succ_id);
         }
         if( (succ_it+1)->start < INT_MAX-1 )
-          next_ex = std::min(next_ex, (succ_it+1)->start - 1);
+          next_ex = std::min(next_ex, (succ_it+1)->start);
       } while(0);
     }
 
     // Deal with wait successors.
     if(next_ex < max_ex) {
       // Partial expansion.
-      curr_itv.next_ex = next_ex;
+      curr_itv.next_ex = next_ex-1;
       heap.insert(curr);
     } else {
       // We _should_ still be the top.
       // FIXME: Deal with conflicts on waits.
       sipp_interval& wait(curr_loc[curr.idx+1]);
       unsigned char w_second = std::min(127, second + reserved.score(pf::M_WAIT, curr.loc, wait.start));
-      if(wait.reach < curr_loc.Tend
+      if(wait.start < curr_loc.Tend
          && (wait.start < wait.reach || w_second < wait.second)
-         && !wait.may_wait()) {
+         && wait.may_wait()) {
         IntId wait_id(curr.loc, curr.idx+1);
         wait.pred = pf::M_WAIT;
         wait.reach = wait.next_ex = wait.start;

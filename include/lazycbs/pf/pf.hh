@@ -20,6 +20,13 @@ struct pf {
     NUM_MOVES
   };
 
+  enum Axis {
+    Ax_NONE = 0,
+    Ax_HORIZ = 1,
+    Ax_VERT = 2,
+    Ax_BOTH = 3
+  };
+
   enum Constraint {
     // Edge constraints
     C_NONE = 0,
@@ -31,6 +38,11 @@ struct pf {
   typedef vec<Step> Path;
 
   static int path_cost(const Path& path) { return path.last().first; }
+
+  static Step* find_step(const Path& path, int t) {
+    return std::lower_bound(path.begin(), path.end(),
+                               t, [](Step s, int t) { return s.first < t; });
+  }
 
   /*
   static const Move move_inv[] = {
@@ -53,13 +65,24 @@ struct pf {
     };
     return _move_inv[m];
   }
+  inline static Axis move_axis(Move m) {
+    static const Axis _move_axis[] = {
+      Ax_HORIZ,
+      Ax_HORIZ,
+      Ax_VERT,
+      Ax_VERT,
+      Ax_NONE,
+      Ax_NONE
+    };
+    return _move_axis[m];
+  }
 
   inline static const char* move_str(Move m) {
     static const char* _move_str[] = {
-      "LEFT",
       "RIGHT",
-      "UP",
+      "LEFT",
       "DOWN",
+      "UP",
       "WAIT",
       "<NUM_MOVES>"
     };
@@ -170,7 +193,6 @@ struct table {
   vec<res_count_map> res_counts;
   constraints reserved;
 };
-
 
 inline bool table::is_allowed(pf::Move m, int loc, unsigned time) {
   return reserved.is_allowed(m, loc, time);

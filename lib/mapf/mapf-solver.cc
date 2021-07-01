@@ -161,8 +161,8 @@ bool MAPF_Solver::minimizeCost(void) {
 
 void MAPF_Solver::printStats(FILE* f) const {
   int LL_num_generated = 0;
-  int LL_num_expanded = 0;
-  int LL_executions = 0;
+  int LL_num_expanded = coord.sipp_pf.LL_expanded;
+  int LL_executions = coord.sipp_pf.LL_searches;
   for(Agent_PF* p : pathfinders) {
     /*
     LL_num_generated += p->num_generated;
@@ -281,42 +281,44 @@ void MAPF_Solver::printMonotoneSubchain(int dy, int dx, int ai, int t) {
   fprintf(stderr, "\n");
 }
 */
-int MAPF_Solver::monotoneSubchainStart(int dy, int dx, int ai, int t) const {
-  assert(0); // FIXME
-  /*
-  int p(agentPosition(pathfinders[ai], t));
-  for(--t; t >= 0; --t) {
-    int q(agentPosition(pathfinders[ai], t));
-    if(p == q)
-      return t+1;
-    if(col_of(p) != col_of(q) && col_of(p) - col_of(q) != dx)
-      return t+1;
-    if(row_of(p) != row_of(q) && row_of(p) - row_of(q) != dy)
-      return t+1;
-    p = q; 
+int MAPF_Solver::monotoneSubchainStart(pf::Move dx, pf::Move dy, int ai, int t) const {
+  const pf::Path& path(coord.get_path(ai));
+
+  unsigned dir_mask = (1 << dx) | (1 << dy);
+
+  auto b = path.begin();
+  auto it = pf::find_step(path, t);
+  assert(it->first == t);
+
+  while(b != it) {
+    auto pred = it-1;
+    if(pred->first != t-1 ||
+       !(dir_mask & (1 << pred->second)))
+      break;
+    it = pred;
+    --t;
   }
-  */
-  return 0;
+  return t;
 }
 
-int MAPF_Solver::monotoneSubchainEnd(int dy, int dx, int ai, int t) const {
-  assert(0); // FIXME
-  /*
-  int p(agentPosition(pathfinders[ai], t));
-  int tMax(pathfinders[ai]->getPath().size());
-  for(++t; t < tMax; ++t) {
-    int q(agentPosition(pathfinders[ai], t));
-    if(p == q)
-      return t-1;
-    if(col_of(p) != col_of(q) && col_of(q) - col_of(p) != dx)
-      return t-1;
-    if(row_of(p) != row_of(q) && row_of(q) - row_of(p) != dy)
-      return t-1;
-    p = q; 
+int MAPF_Solver::monotoneSubchainEnd(pf::Move dy, pf::Move dx, int ai, int t) const {
+  const pf::Path& path(coord.get_path(ai));
+
+  unsigned dir_mask = (1 << dx) | (1 << dy);
+
+  auto it = pf::find_step(path, t);
+  auto en = path.end();
+  assert(it->first == t);
+
+  while(it != en) {
+    auto succ = it+1;
+    if(succ->first != t+1 ||
+       !(dir_mask & (1 << succ->second)))
+      return t;
+    it = succ;
+    ++t;
   }
-  return tMax-1;
-  */
-  return INT_MAX;
+  return t;
 }
 
 bool MAPF_Solver::resolveConflicts(void) {
@@ -446,9 +448,22 @@ bool MAPF_Solver::checkForConflicts(void) {
       curr_loc[ai] = loc;
       
       if(nmap[loc] >= 0) {
+        int aj(nmap[loc]);
+
+        // Pretty ugly case checks.
+        if(path_it[ai] == coord.get_path(ai).begin() || path_it[aj] == coord.get_path(aj).begin())
+          goto conflict_is_not_rectangle;
+        if( (path_it[ai]-1)->first != t || (path_it[aj]-1)->first != t )
+          goto conflict_is_not_rectangle;
+        {
+        pf::Move m_ai = (path_it[ai]-1)->second;
+        pf::Move m_aj = (path_it[aj]-1)->second;
+        if( (pf::move_axis(m_ai)|pf::move_axis(m_aj)) != pf::Ax_BOTH )
+          goto conflict_is_not_rectangle;
+        }
+        // Fall through
         /*
         // Already occupied.
-        int aj(nmap[loc]);
         int dy1 = row_of(loc) - row_of(prev_loc[ai]);
         int dx1 = col_of(loc) - col_of(prev_loc[ai]);
         int dy2 = row_of(loc) - row_of(prev_loc[aj]);
@@ -528,11 +543,16 @@ bool MAPF_Solver::checkForConflicts(void) {
           new_conflicts.push(conflict(t, ai, nmap[loc], loc, -1));
         }
         */
+conflict_is_not_rectangle:
         // FIXME: Re-introduce rectangles/barriers.
         new_conflicts.push(conflict(t, ai, nmap[loc], pf::M_WAIT, loc));
 
+        /* */
         clear_map(agent_set, prev_loc, cmap);
         clear_map(agent_set, curr_loc, nmap);
+        /* // This breaks _something_, haven't figured out what yet.
+        cmap[prev_loc[ai]] = -1;
+        */
         agent_set.remove(ai);
         // return true;
         continue;
@@ -549,9 +569,14 @@ bool MAPF_Solver::checkForConflicts(void) {
         if(cmap[rloc] == ai) {
           // Edge conflict
           // new_conflicts.push(conflict(t-1, ai, cmap[loc], loc, rloc));
-          new_conflicts.push(conflict(t, ai, cmap[loc], coord.nav.move_dir(loc, rloc), loc));
+          new_conflicts.push(conflict(t, ai, cmap[loc], coord.nav.move_dir(rloc, loc), loc));
+          /* */
           clear_map(agent_set, prev_loc, cmap);
           clear_map(agent_set, curr_loc, nmap);
+          /* /
+          cmap[prev_loc[ai]] = -1;
+          nmap[curr_loc[ai]] = -1;
+          */
           agent_set.remove(ai);
           // return true;
           continue;
@@ -764,8 +789,8 @@ bool MAPF_Solver::addConflict(void) {
       pf::Move move = new_conflict.p.move;
       // Normalize. This should work fine for
       // M_WAIT (vertex) constraints too.
-      if(loc > coord.nav.delta[loc][move]) {
-        loc = coord.nav.delta[loc][move];
+      if(loc > coord.nav.inv[loc][move]) {
+        loc = coord.nav.inv[loc][move];
         move = pf::move_inv(move);
       }
         
