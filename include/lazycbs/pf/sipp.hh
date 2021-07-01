@@ -60,6 +60,7 @@ struct sipp_ctx {
   sipp_ctx(int size);
   ~sipp_ctx(void) { delete[] ptr; }
 
+
   void forbid(pf::Move m, unsigned loc, int time);
   void lock(unsigned loc, int time);
   void unlock(unsigned loc);
@@ -70,6 +71,11 @@ struct sipp_ctx {
   sipp_loc& operator[](int c) { return ptr[c]; }
   const sipp_loc& operator[](int c) const { return ptr[c]; }
   
+  bool is_allowed(pf::Move m, unsigned loc, unsigned time) const {
+    auto itv = ptr[loc].reach(time);
+    return itv->is_allowed(m);
+  }
+
   sipp_loc* ptr;
   int timestamp;
 };

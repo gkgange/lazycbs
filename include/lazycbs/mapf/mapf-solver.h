@@ -45,11 +45,9 @@ class MAPF_Solver {
     }
   };
     
-  enum BarrierDir { UP = 0, LEFT = 1, DOWN = 2, RIGHT = 3 };
-
   struct barrier_key {
     int agent;
-    BarrierDir dir; 
+    pf::Move dir; 
     int location;
     int time_at_edge;
   };
@@ -185,7 +183,7 @@ class MAPF_Solver {
   bool addConflict(void);
   bool processCore(vec<geas::patom_t>& core);
       
-  geas::patom_t getBarrier(int ai, BarrierDir dir, int t0, int p0, int dur);
+  geas::patom_t getBarrier(int ai, pf::Move dir, int t0, int p0, int dur);
   bool checkBarrierViolated(int ai, int t, int p, int delta, int dur) const;
 
   int monotoneSubchainStart(pf::Move dy, pf::Move dx, int ai, int t) const;

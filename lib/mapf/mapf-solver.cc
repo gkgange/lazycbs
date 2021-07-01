@@ -460,6 +460,8 @@ bool MAPF_Solver::checkForConflicts(void) {
         pf::Move m_aj = (path_it[aj]-1)->second;
         if( (pf::move_axis(m_ai)|pf::move_axis(m_aj)) != pf::Ax_BOTH )
           goto conflict_is_not_rectangle;
+
+
         }
         // Fall through
         /*
@@ -606,10 +608,8 @@ bool MAPF_Solver::checkBarrierViolated(int ai, int t, int p, int delta, int dur)
 }
 
 //enum BarrierDir { UP = 0, LEFT = 1, DOWN = 2, RIGHT = 3 };
-static int barrier_dx[4] = { 0, -1, 0, 1 };
-static int barrier_dy[4] = { -1, 0, 1, 0 };
 
-geas::patom_t MAPF_Solver::getBarrier(int ai, BarrierDir dir, int t, int p, int dur) {
+geas::patom_t MAPF_Solver::getBarrier(int ai, pf::Move dir, int t, int origin, int dur) {
   // If this barrier is trivially violated, just return F.
   /*
   int delta = ml.cols * barrier_dy[dir] + barrier_dx[dir];

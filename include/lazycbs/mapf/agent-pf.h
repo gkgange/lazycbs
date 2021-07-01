@@ -20,11 +20,33 @@ using namespace geas;
 class Agent_PF : public propagator, public prop_inst<Agent_PF> {
   // An obstacle, with the activating atom.
   enum ObstacleType { O_MUTEX, O_BARRIER };
+  /*
   struct barrier_info {
     int pos; // Barrier position at the start time
     pf::Move dir; // Difference between successive barrier positions
     int duration; // How long does the barrier hold?
   };
+  */
+  // Generalized version.
+  struct constraint {
+    constraint(pf::Move _move, int _loc, int _time)
+    : move(_move), loc(_loc), time(_time) { }
+
+    pf::Move move;
+    int loc;
+    int time;
+  };
+
+  struct barrier_info {
+    barrier_info(geas::patom_t _at) : at(_at) { }
+    geas::patom_t at;
+    vec<constraint> constraints;
+  };
+  
+  struct gen_barrier_info {
+    vec<constraint> constraints;
+  };
+  
   struct mutex_info {
     int loc;
     pf::Move move;
@@ -32,17 +54,36 @@ class Agent_PF : public propagator, public prop_inst<Agent_PF> {
   struct obstacle_info {
   obstacle_info(patom_t _at, int _timestep, int loc, pf::Move move)
   : at(_at), timestep(_timestep), tag(O_MUTEX), p({ loc, move }) { }
+    /*
   obstacle_info(patom_t _at, int _timestep, int loc, pf::Move move, int duration)
       : at(_at), timestep(_timestep), tag(O_BARRIER), b({ loc, move, duration}) { }
+    */
+    obstacle_info(patom_t _at, int _bidx)
+    : at(_at), timestep(-1), tag(O_BARRIER), b(_bidx) { }
+    
     patom_t at;
     int timestep;
     ObstacleType tag;
     
     union { 
-      barrier_info b;
+      // barrier_info b;
+      int b;
       mutex_info p;
     };
   };
+
+  // For tracking explanations
+  struct reason_cell {
+    reason_cell(void)
+    {
+      for(int ii = 0; ii < pf::NUM_MOVES; ++ii)
+        r[ii] = at_Undef;
+    }
+    geas::patom_t& operator[](pf::Move m) { return r[m]; }
+
+    geas::patom_t r[pf::NUM_MOVES];
+  };
+  typedef uint64_triemap<uint64_t, reason_cell, UIntOps> reason_map;
 
   // A (previous) incumbent.
   /*
@@ -70,6 +111,13 @@ class Agent_PF : public propagator, public prop_inst<Agent_PF> {
     return Wt_Keep;
   }
 
+  watch_result wake_barrier(int bi) {
+    apply_gen_barrier(bi);
+    if(incumbent_conflicts_with(barriers[bi].constraints))
+      queue_prop();
+    return Wt_Keep;
+  }
+
   void expl_length(int tl, pval_t p, vec<clause_elt>& expl) {
     // For now, just collect the set of constraints that were active.
     obstacle_atoms(tl, expl);
@@ -87,62 +135,43 @@ class Agent_PF : public propagator, public prop_inst<Agent_PF> {
 
   void obstacle_atoms(int tl, vec<clause_elt>& expl) {
     for(int si = 0; si < tl; ++si) {
-      EX_PUSH(expl, ~obstacles[obs_stack[si]].at);
+      // EX_PUSH(expl, ~obstacles[obs_stack[si]].at);
+      constraint c = obs_stack[si];
+      geas::patom_t at = (*reasons[c.loc].find(c.time)).value[c.move];
+      EX_PUSH(expl, ~at);
     }
-  }
-
-  // Restore the active constraints to the state we _should_ be in now,
-  // looking at obs_tl.
-  void revert_barrier(int t, const barrier_info& b) {
-    assert(0);
-    /*
-    int p = b.pos;
-    while(t < end) {
-      // Ugh. Need to make sure we don't double-release
-      // a location.
-      sctx.release(pf::M_VERT, p, t);
-      int pred = p;
-      p = coord.nav.delta[p][b.move];
-      t += coord.nav.dist(pred, p);
-    }
-    */
   }
 
   void restore_stack(void) {
     // Iteration order doesn't matter, because the multiset of pops
     // is the same.
     for(int si = obs_tl; si < obs_stack.size(); ++si) {
-      const obstacle_info& o(obstacles[obs_stack[si]]);
-      if(o.tag == O_BARRIER) {
-        revert_barrier(o.timestep, o.b);
-      } else {
-        sctx.release(o.p.move, o.p.loc, o.timestep);
-        if(o.p.move != pf::M_WAIT) {
-          sctx.release(pf::move_inv(o.p.move),
-                       coord.nav.inv[o.p.loc][o.p.move], o.timestep);
-        }
+      for(int si = obs_tl; si < obs_stack.size(); ++si) {
+        const constraint& c(obs_stack[si]);
+        sctx.release(c.move, c.loc, c.time);
       }
     }
     obs_stack.shrink(obs_stack.size() - obs_tl);
   }
 
-  void apply_barrier(int t, const barrier_info& b) {
-    assert(0);
-#if 0
-    int p = b.pos;
-    int end = t + b.duration;
-    while(t < end) {
-      sctx.release(pf::M_VERT, p, t);
+  void apply_gen_barrier(int bidx) {
+    const barrier_info& b(barriers[bidx]);
+
+    for(constraint c : b.constraints) {
+      forbid(c.move, c.loc, c.time, b.at);
+      if(c.move != pf::M_WAIT)
+        forbid(pf::move_inv(c.move), coord.nav.inv[c.loc][c.move], c.time, b.at);
     }
-    for(; t < end; ++t) {
-#if 0
-      active_obstacles[t].push_back(std::make_pair(p, -1));
-#else
-      active_obstacles[p].push_back(std::make_pair(t, -1));
-#endif
-      p += b.delta;
+  }
+
+  void forbid(pf::Move move, int loc, int time, geas::patom_t reason) {
+    // Check whether constraint is already posted.
+    if(sctx.is_allowed(move, loc, time)) {
+      sctx.forbid(move, loc, time);
+      auto it = reasons[loc].find(time);
+      (*it).value[move] = reason;
+      obs_stack.push(constraint(move, loc, time));
     }
-#endif
   }
 
   void apply_obstacle(int ci) {
@@ -154,15 +183,20 @@ class Agent_PF : public propagator, public prop_inst<Agent_PF> {
     // Then apply the new obstacle.
     const obstacle_info& o(obstacles[ci]);
 
+    /*
     obs_stack.push(ci);
     set(obs_tl, obs_stack.size());
+    */
     if(o.tag == O_BARRIER) {
-      apply_barrier(o.timestep, o.b);
+      //apply_barrier(o.timestep, o.b);
+      assert(0);
+      //apply_gen_barrier(o.b);
     } else {
-      sctx.forbid(o.p.move, o.p.loc, o.timestep);
+      forbid(o.p.move, o.p.loc, o.timestep, o.at);
       if(o.p.move != pf::M_WAIT)
-        sctx.forbid(pf::move_inv(o.p.move), coord.nav.inv[o.p.loc][o.p.move], o.timestep);
+        forbid(pf::move_inv(o.p.move), coord.nav.inv[o.p.loc][o.p.move], o.timestep, o.at);
     }
+    set(obs_tl, obs_stack.size());
   }
 
   // The first step not before t.
@@ -218,6 +252,37 @@ class Agent_PF : public propagator, public prop_inst<Agent_PF> {
       return false;
     }
   }
+  bool incumbent_conflicts_with(const vec<constraint>& constraints) {
+    update_incumbent();
+    const pf::Path& path(coord.get_path(agent_id));
+
+    for(const constraint& c : constraints) {
+      int idx = get_path_index(path, c.time);
+      pf::Step step(idx < path.size() ? path[idx] : std::make_pair(INT_MAX, pf::M_WAIT));
+      int loc = coord.nav.delta[incumbent[idx]][step.second];
+
+      // First, check vertex constraints.
+      if(c.move == pf::M_WAIT && loc == c.loc)
+        return true;
+
+      // Edge constraints only trigger at the moment of transition.
+      if(step.first != c.time)
+        return false;
+
+      // Check forward direction. Started somewhere, moved
+      // in constraint direction, landed at constraint location.
+      if(path[idx].second == c.move && loc == c.loc)
+        return true;
+      
+      // Otherwise, we started from the constraint location,
+      // and moved in the inverse direction.
+      if(path[idx].second == pf::move_inv(c.move)
+         && incumbent[idx] == c.loc)
+        return true;
+      return false;
+    }
+  }
+
 
 public:
  Agent_PF(solver_data* s, coordinator& _coord, intvar _cost, int start_location, int goal_location)
@@ -231,6 +296,7 @@ public:
     , sctx(coord.nav.size())
     , f_heur(coord.nav.fwd_heuristic(goal_location))
     , r_heur(coord.nav.rev_heuristic(start_location))
+    , reasons(coord.nav.size())
     {
     cost.attach(E_UB, watch<&P::wake_cost>(0, Wt_IDEM));
     int pathC = coord.sipp_pf.search(start_pos, goal_pos,
@@ -271,22 +337,37 @@ public:
     }
   }
 
+  void make_reason_cell(int loc, int timestep) {
+    auto it = reasons[loc].find(timestep);
+    if(it == reasons[loc].end())
+      reasons[loc].add(timestep, reason_cell());
+  }
+
   int register_obstacle(patom_t at, int timestep, pf::Move move, int loc) {
     int ci(obstacles.size());
     // Add the new constraint to the pool
     obstacles.push(obstacle_info(at, timestep, loc, move));
+    make_reason_cell(loc, timestep);
+    if(move != pf::M_WAIT)
+      make_reason_cell(coord.nav.inv[loc][move], timestep);
+
     // And make sure the propagator wakes up when becomes set.
     attach(s, at, watch<&P::wake_obstacle>(ci, Wt_IDEM));
     return ci;
   }
 
-  int register_barrier(patom_t at, int timestep, int loc, pf::Move move, int duration) {
-    int ci(obstacles.size()); 
+  int register_barrier(patom_t at, const vec<constraint>& constraints) {
+    int bi(barriers.size()); 
+    barriers.push(barrier_info(at));
+    for(auto c : constraints)
+      barriers[bi].constraints.push(c);
+    /*
     // Add the new constraint to the pool
-    obstacles.push(obstacle_info(at, timestep, loc, move, duration));
+    barriers.push(obstacle_info(at, timestep, loc, move, duration));
     // And make sure the propagator wakes up when becomes set.
     attach(s, at, watch<&P::wake_obstacle>(ci, Wt_IDEM));
-    return ci;
+    */
+    return bi;
   }
 
   bool propagate(vec<clause_elt>& confl) {
@@ -353,7 +434,8 @@ public:
   intvar cost;
 
   vec<obstacle_info> obstacles; // The registered obstacles
-  vec<int> obs_stack;           // The history of pushed obstacles
+  vec<barrier_info> barriers;
+  vec<constraint> obs_stack;           // The history of pushed obstacles
   Tint obs_tl;                  // How big _should_ obs_stack be?
 
   // History is now managed by the coordinator. Bypasses are currently still here,
@@ -370,6 +452,9 @@ public:
   sipp_ctx sctx; 
   int* f_heur;
   int* r_heur;
+
+  // Needs to be kept synchronized with sctx.
+  vec<reason_map> reasons;
 };
 
 }
