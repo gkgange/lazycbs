@@ -74,10 +74,21 @@ class MAPF_Solver {
   };
 
   enum ConflictType { C_MUTEX, C_BARRIER };
+  /*
   struct barrier_info {
     int s_loc; // Start corner
     int e_loc; // Exit corner
   };
+  */
+  struct barrier_info {
+    int st_row;
+    int st_col;
+    pf::Move dir_h;
+    pf::Move dir_v;
+    int len_h;
+    int len_v;
+  };
+
   struct conflict {
     conflict(void) { }
 
@@ -85,17 +96,18 @@ class MAPF_Solver {
       : timestamp(_timestamp), type(C_MUTEX)
       , a1(_a1), a2(_a2), p{_move, _loc} { }
 
-    conflict(int _timestamp, int _a1, int _a2, int _loc1, int _loc2, bool dummy)
+  conflict(int _timestamp, int _a1, int _a2, int _strow, int _stcol,
+           pf::Move _dx, pf::Move _dy, int _lx, int _ly)
       : timestamp(_timestamp), type(C_BARRIER)
-      , a1(_a1), a2(_a2), b({_loc1, _loc2}) { }
+      , a1(_a1), a2(_a2), b({_strow, _stcol, _dx, _dy, _lx, _ly}) { }
     /*
     conflict(int _timestamp, int _a1, int _a2, int h_loc, int v_loc, int r_loc)
       : timestamp(_timestamp), type(C_BARRIER)
       , a1(_a1), a2(_a2), b({h_loc, v_loc, r_loc}) { }
       */
 
-    static conflict barrier(int t, int a1, int a2, int loc1, int loc2) {
-      conflict c(t, a1, a2, loc1, loc2, false);
+    static conflict barrier(int t, int a1, int a2, std::pair<int, int> loc, pf::Move horiz, pf::Move vert, int dur_h, int dur_v) {
+      conflict c(t, a1, a2, loc.first, loc.second, horiz, vert, dur_h, dur_v);
       return c;
     }
 
@@ -133,6 +145,10 @@ class MAPF_Solver {
   geas::solver s;
 
   vec< std::pair<int, int> > nav_coords;
+  // Indexing so we can do barriers easily.
+  vec< vec<int> > row_locs;
+  vec< vec<int> > col_locs;
+
   navigation nav;
 
   coordinator coord;
@@ -186,7 +202,8 @@ class MAPF_Solver {
   geas::patom_t getBarrier(int ai, pf::Move dir, int t0, int p0, int dur);
   bool checkBarrierViolated(int ai, int t, int p, int delta, int dur) const;
 
-  int monotoneSubchainStart(pf::Move dy, pf::Move dx, int ai, int t) const;
+  std::pair<int, pf::Step*> monotoneSubchainStart(pf::Move dx, pf::Move dy, int ai, int loc, int t) const;
+  std::pair<int, pf::Step*> monotoneSubchainEnd(pf::Move dx, pf::Move dy, int ai, int loc, int t) const;
   int monotoneSubchainEnd(pf::Move dy, pf::Move dx, int ai, int t) const;
 
   ~MAPF_Solver();

@@ -28,6 +28,7 @@ class Agent_PF : public propagator, public prop_inst<Agent_PF> {
   };
   */
   // Generalized version.
+ public:
   struct constraint {
     constraint(pf::Move _move, int _loc, int _time)
     : move(_move), loc(_loc), time(_time) { }
@@ -36,6 +37,7 @@ class Agent_PF : public propagator, public prop_inst<Agent_PF> {
     int loc;
     int time;
   };
+ protected:
 
   struct barrier_info {
     barrier_info(geas::patom_t _at) : at(_at) { }

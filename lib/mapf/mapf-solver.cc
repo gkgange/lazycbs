@@ -26,10 +26,18 @@ MAPF_Solver::MAPF_Solver(const MapLoader& ml, const AgentsLoader& al, int UB)
   , cost_ub(UB)
   , HL_conflicts(0)
   , nav(navigation::of_obstacle_array(ml.cols, ml.rows, ml.get_map(), nav_coords))
+  , row_locs(ml.rows), col_locs(ml.cols)
   , coord(s, nav) {
     int num_of_agents = al.num_of_agents;
     // int map_size = ml->rows*ml->cols;
     cost_lb = 0;
+
+    // Assumes nav_coords are created left-to-right, top-to-bottom.
+    for(int ii = 0; ii < nav_coords.size(); ++ii) {
+      auto p = nav_coords[ii];
+      row_locs[p.first].push(ii);
+      col_locs[p.second].push(ii);
+    }
 
     for(int ai = 0; ai < num_of_agents; ++ai) {
       int init_loc = _nav::find_coord(nav_coords, al.initial_locations[ai].first, al.initial_locations[ai].second);
@@ -56,6 +64,9 @@ bool apply_penalties(MAPF_Solver& mf) {
   return true;
 }
 
+static int Move_dx[] = { 1, -1, 0, 0, 0 };
+static int Move_dy[] = { 0, 0, 1, -1, 0 };
+
 void log_conflict(MAPF_Solver& mapf) {
   for(auto new_conflict : mapf.new_conflicts) {
     int a1(new_conflict.a1);
@@ -63,9 +74,11 @@ void log_conflict(MAPF_Solver& mapf) {
     int t(new_conflict.timestamp);
 
     if(new_conflict.type == MAPF_Solver::C_BARRIER) {
+      auto b = new_conflict.b;
       fprintf(stderr, "%%%% Adding rectangle: [%d, (%d, %d) |- (%d, %d), %d, %d]\n",
-        t, mapf.row_of(new_conflict.b.s_loc), mapf.col_of(new_conflict.b.s_loc),
-           mapf.row_of(new_conflict.b.e_loc), mapf.col_of(new_conflict.b.e_loc),
+        t, b.st_row, b.st_col,
+              b.st_row + Move_dy[b.dir_v] * b.len_v,
+              b.st_col + Move_dx[b.dir_h] * b.len_h,
            a1, a2);
     } else {
       const Agent_PF* pf1 = mapf.pathfinders[new_conflict.a1];
@@ -281,7 +294,7 @@ void MAPF_Solver::printMonotoneSubchain(int dy, int dx, int ai, int t) {
   fprintf(stderr, "\n");
 }
 */
-int MAPF_Solver::monotoneSubchainStart(pf::Move dx, pf::Move dy, int ai, int t) const {
+std::pair<int, pf::Step*> MAPF_Solver::monotoneSubchainStart(pf::Move dx, pf::Move dy, int ai, int loc, int t) const {
   const pf::Path& path(coord.get_path(ai));
 
   unsigned dir_mask = (1 << dx) | (1 << dy);
@@ -295,13 +308,14 @@ int MAPF_Solver::monotoneSubchainStart(pf::Move dx, pf::Move dy, int ai, int t) 
     if(pred->first != t-1 ||
        !(dir_mask & (1 << pred->second)))
       break;
+    loc = coord.nav.inv[loc][pred->second];
     it = pred;
     --t;
   }
-  return t;
+  return std::make_pair(loc, it);
 }
 
-int MAPF_Solver::monotoneSubchainEnd(pf::Move dy, pf::Move dx, int ai, int t) const {
+std::pair<int, pf::Step*> MAPF_Solver::monotoneSubchainEnd(pf::Move dy, pf::Move dx, int ai, int loc, int t) const {
   const pf::Path& path(coord.get_path(ai));
 
   unsigned dir_mask = (1 << dx) | (1 << dy);
@@ -314,11 +328,12 @@ int MAPF_Solver::monotoneSubchainEnd(pf::Move dy, pf::Move dx, int ai, int t) co
     auto succ = it+1;
     if(succ->first != t+1 ||
        !(dir_mask & (1 << succ->second)))
-      return t;
+      return std::make_pair(loc, it);
+    loc = coord.nav.delta[loc][succ->second];
     it = succ;
     ++t;
   }
-  return t;
+  return std::make_pair(loc, it);
 }
 
 bool MAPF_Solver::resolveConflicts(void) {
@@ -396,7 +411,86 @@ void clear_map(const vec<int>& loc, vec<int>& map) {
     map[loc[ii]] = -1;
 }
 
-// Multiple-conflict handling
+template<class V>
+struct ptr_rev_iter {
+  ptr_rev_iter(V* _ptr) : ptr(_ptr) { }
+
+  V* ptr;
+
+  V& operator*(void) { return *ptr; }
+  const V& operator*(void) const { return *ptr; }
+  ptr_rev_iter& operator++(void) { --ptr; return *this; }
+  bool operator!=(const ptr_rev_iter& o) { return ptr != o.ptr; }
+};
+template<class V>
+ptr_rev_iter<V> ptr_rev(V* ptr) { return ptr_rev_iter<V>(ptr); }
+
+template<class It, class F>
+vec<Agent_PF::constraint> extract_barrier(const MAPF_Solver& m, int t0, int c0, int len, It b, It e, F loc_coord) {
+  int tEnd = t0 + len;
+
+  vec<Agent_PF::constraint> csts;
+  
+  for(; b != e; ++b) {
+    int loc = *b;
+    int c = loc_coord(loc);
+    int t = t0 + (c - c0);
+    if(t >= tEnd)
+      break;
+
+    csts.push(Agent_PF::constraint(pf::M_WAIT, loc, t));
+  }
+  return csts;
+}
+
+vec<Agent_PF::constraint> barrier_constraints(const MAPF_Solver& m, int t0, std::pair<int, int> coord, pf::Move dir, int len) {
+  const auto& coords(m.nav_coords);
+
+  switch(dir) {
+  case pf::M_RIGHT:
+    {
+      const vec<int>& row(m.row_locs[coord.first]);
+    return extract_barrier(m, t0, coord.second, len,
+                           std::lower_bound(row.begin(), row.end(), coord.second,
+                                            [&coords](int loc, int col) { return coords[loc].second < col; }),
+                           row.end(),
+                           [&coords](int loc) { return coords[loc].second; });
+    }
+  case pf::M_LEFT:
+    {
+      const vec<int>& row(m.row_locs[coord.first]);
+      auto it = std::upper_bound(row.begin(), row.end(), coord.second,
+                                 [&coords](int col, int loc) { return col < loc; });
+      return extract_barrier(m, t0, -coord.second, len,
+                             ptr_rev(it-1),
+                             ptr_rev(row.begin()-1),
+                             [&coords](int loc) { return -coords[loc].second; });
+    }
+  case pf::M_DOWN:
+    {
+      const vec<int>& col(m.col_locs[coord.second]);
+    return extract_barrier(m, t0, coord.first, len,
+                           std::lower_bound(col.begin(), col.end(), coord.first,
+                                            [&coords](int loc, int row) { return coords[loc].first < row; }),
+                           col.end(),
+                           [&coords](int loc) { return coords[loc].second; });
+  }
+  case pf::M_UP:
+    {
+      const vec<int>& col(m.col_locs[coord.second]);
+      auto it = std::upper_bound(col.begin(), col.end(), coord.first,
+                                 [&coords](int row, int loc) { return row < coords[loc].first; });
+      return extract_barrier(m, t0, -coord.second, len,
+                             ptr_rev(it-1),
+                             ptr_rev(col.begin()-1),
+                             [&coords](int loc) { return -coords[loc].second; });
+    }
+  default:
+    assert(0);
+    return vec<Agent_PF::constraint>();
+  }
+}
+
 bool MAPF_Solver::checkForConflicts(void) {
   int pMax = maxPathLength();
   
@@ -450,17 +544,68 @@ bool MAPF_Solver::checkForConflicts(void) {
       if(nmap[loc] >= 0) {
         int aj(nmap[loc]);
 
+        pf::Move m_ai = pf::NUM_MOVES;
+        pf::Move m_aj = pf::NUM_MOVES;
+        
         // Pretty ugly case checks.
         if(path_it[ai] == coord.get_path(ai).begin() || path_it[aj] == coord.get_path(aj).begin())
           goto conflict_is_not_rectangle;
         if( (path_it[ai]-1)->first != t || (path_it[aj]-1)->first != t )
           goto conflict_is_not_rectangle;
-        {
-        pf::Move m_ai = (path_it[ai]-1)->second;
-        pf::Move m_aj = (path_it[aj]-1)->second;
+
+        m_ai = (path_it[ai]-1)->second;
+        m_aj = (path_it[aj]-1)->second;
         if( (pf::move_axis(m_ai)|pf::move_axis(m_aj)) != pf::Ax_BOTH )
           goto conflict_is_not_rectangle;
 
+        if(pf::move_axis(m_ai) != pf::Ax_HORIZ) {
+          std::swap(ai, aj);
+          std::swap(m_ai, m_aj);
+        }
+        assert(pf::move_axis(m_ai) == pf::Ax_HORIZ);
+
+        {
+        // Now we need to find the rectangle boundaries.
+        std::pair<int, pf::Step*> sH(monotoneSubchainStart(m_ai, m_aj, ai, loc, t));
+        std::pair<int, pf::Step*> sV(monotoneSubchainStart(m_ai, m_aj, aj, loc, t));
+
+        // If there is overhang, adjust the locations.
+        while(true) {
+          if(Move_dx[m_ai] * (col_of(sV.first) - col_of(sH.first)) < 0) {
+            sV.first = coord.nav.delta[sV.first][sV.second->second];
+            sV.second++;
+            continue;
+          }
+          if(Move_dy[m_aj] * (row_of(sH.first) - row_of(sV.first)) < 0) {
+            sH.first = coord.nav.delta[sH.first][sH.second->second];
+            sH.second++;
+            continue;
+          }
+          break;
+        }
+
+        // Now do the same for the end positions.
+        std::pair<int, pf::Step*> eH(monotoneSubchainEnd(m_ai, m_aj, ai, loc, t));
+        std::pair<int, pf::Step*> eV(monotoneSubchainEnd(m_ai, m_aj, aj, loc, t));
+        while(true) {
+          if(Move_dx[m_ai] * (col_of(eH.first) - col_of(eV.first)) < 0) {
+            eV.first = coord.nav.inv[eV.first][eV.second->second];
+            eV.second--;
+            continue;
+          }
+          if(Move_dy[m_aj] * (row_of(eV.first) - row_of(eH.first)) < 0) {
+            eH.first = coord.nav.inv[eH.first][eH.second->second];
+            eH.second--;
+            continue;
+          }
+          break;
+        }
+        // Now we've found the biggest feasible rectangles.
+        int t0 = t - abs(row_of(loc) - row_of(sV.first)) - abs(col_of(loc) - col_of(sH.first));
+        new_conflicts.push(conflict::barrier(t0, ai, aj, std::make_pair(row_of(sV.first), col_of(sH.first)),
+                                             m_ai, m_aj,
+                                             1 + abs(col_of(eH.first) - col_of(sH.first)),
+                                             1 + abs(row_of(eV.first) - row_of(sV.first))));
 
         }
         // Fall through

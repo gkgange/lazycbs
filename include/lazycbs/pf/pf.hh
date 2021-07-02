@@ -139,6 +139,7 @@ struct navigation {
     int dest[pf::NUM_MOVES];
   };
 
+
   template<class T>
   static navigation of_obstacle_array(int width, int height, const T& blocked,
                                       vec<std::pair<int, int> >& out_coord);
@@ -152,6 +153,8 @@ struct navigation {
   const adj_list& predecessors(int loc) const { return pred[loc]; }
 
   pf::Move move_dir(int pred, int succ) const;
+
+  int nearest_location(int row, int col, pf::Move move);
   
   vec<adj_list> succ;
   vec<adj_list> pred;
