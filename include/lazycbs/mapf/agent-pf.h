@@ -114,8 +114,11 @@ class Agent_PF : public propagator, public prop_inst<Agent_PF> {
   }
 
   watch_result wake_barrier(int bi) {
+    if(obs_tl < obs_stack.size())
+      restore_stack();
+    assert(obs_tl == obs_stack.size());
     apply_gen_barrier(bi);
-    if(incumbent_conflicts_with(barriers[bi].constraints))
+    if(incumbent_conflicts_with<>(barriers[bi].constraints))
       queue_prop();
     return Wt_Keep;
   }
@@ -148,10 +151,8 @@ class Agent_PF : public propagator, public prop_inst<Agent_PF> {
     // Iteration order doesn't matter, because the multiset of pops
     // is the same.
     for(int si = obs_tl; si < obs_stack.size(); ++si) {
-      for(int si = obs_tl; si < obs_stack.size(); ++si) {
-        const constraint& c(obs_stack[si]);
-        sctx.release(c.move, c.loc, c.time);
-      }
+      const constraint& c(obs_stack[si]);
+      sctx.release(c.move, c.loc, c.time);
     }
     obs_stack.shrink(obs_stack.size() - obs_tl);
   }
@@ -164,6 +165,7 @@ class Agent_PF : public propagator, public prop_inst<Agent_PF> {
       if(c.move != pf::M_WAIT)
         forbid(pf::move_inv(c.move), coord.nav.inv[c.loc][c.move], c.time, b.at);
     }
+    set(obs_tl, obs_stack.size());
   }
 
   void forbid(pf::Move move, int loc, int time, geas::patom_t reason) {
@@ -190,9 +192,7 @@ class Agent_PF : public propagator, public prop_inst<Agent_PF> {
     set(obs_tl, obs_stack.size());
     */
     if(o.tag == O_BARRIER) {
-      //apply_barrier(o.timestep, o.b);
-      assert(0);
-      //apply_gen_barrier(o.b);
+      apply_gen_barrier(o.b);
     } else {
       forbid(o.p.move, o.p.loc, o.timestep, o.at);
       if(o.p.move != pf::M_WAIT)
@@ -208,7 +208,6 @@ class Agent_PF : public propagator, public prop_inst<Agent_PF> {
     return it - path.begin();
   }
 
- 
   bool incumbent_conflicts_with(int ci) {
     update_incumbent();
 
@@ -231,7 +230,9 @@ class Agent_PF : public propagator, public prop_inst<Agent_PF> {
       int idx = get_path_index(path, o.timestep);
 
       pf::Step step(idx < path.size() ? path[idx] : std::make_pair(INT_MAX, pf::M_WAIT));
-      int loc = coord.nav.delta[incumbent[idx]][step.second];
+      int loc = incumbent[idx];
+      if(step.first == o.timestep)
+        loc = coord.nav.delta[loc][step.second];
 
       // First, check vertex constraints.
       if(o.p.move == pf::M_WAIT && loc == o.p.loc)
@@ -254,35 +255,51 @@ class Agent_PF : public propagator, public prop_inst<Agent_PF> {
       return false;
     }
   }
+
+  template<bool DEBUG = false>
   bool incumbent_conflicts_with(const vec<constraint>& constraints) {
     update_incumbent();
     const pf::Path& path(coord.get_path(agent_id));
 
-    for(const constraint& c : constraints) {
+    for(int ci = 0; ci < constraints.size(); ++ci) {
+      const constraint& c = constraints[ci];
+      
       int idx = get_path_index(path, c.time);
       pf::Step step(idx < path.size() ? path[idx] : std::make_pair(INT_MAX, pf::M_WAIT));
-      int loc = coord.nav.delta[incumbent[idx]][step.second];
+
+      int loc = incumbent[idx];
+      if(step.first == c.time)
+        loc = coord.nav.delta[loc][step.second];
 
       // First, check vertex constraints.
-      if(c.move == pf::M_WAIT && loc == c.loc)
+      if(c.move == pf::M_WAIT && loc == c.loc) {
+        if(DEBUG)
+          fprintf(stderr, "%% Conflicting vertex [%d].\n", ci);
         return true;
+      }
 
       // Edge constraints only trigger at the moment of transition.
       if(step.first != c.time)
-        return false;
+        continue;
 
       // Check forward direction. Started somewhere, moved
       // in constraint direction, landed at constraint location.
-      if(path[idx].second == c.move && loc == c.loc)
+      if(path[idx].second == c.move && loc == c.loc) {
+        if(DEBUG)
+          fprintf(stderr, "%% Conflicting edge [%d].\n", ci);
         return true;
+      }
       
       // Otherwise, we started from the constraint location,
       // and moved in the inverse direction.
       if(path[idx].second == pf::move_inv(c.move)
-         && incumbent[idx] == c.loc)
+         && incumbent[idx] == c.loc) {
+        if(DEBUG)
+          fprintf(stderr, "%% Conflicting dual edge [%d].\n", ci);
         return true;
-      return false;
+      }
     }
+    return false;
   }
 
 
@@ -361,15 +378,19 @@ public:
   int register_barrier(patom_t at, const vec<constraint>& constraints) {
     int bi(barriers.size()); 
     barriers.push(barrier_info(at));
-    for(auto c : constraints)
+    for(auto c : constraints) {
+      make_reason_cell(c.loc, c.time);
       barriers[bi].constraints.push(c);
+    }
+    attach(s, at, watch<&P::wake_barrier>(bi, Wt_IDEM));
+    return bi;
     /*
     // Add the new constraint to the pool
     barriers.push(obstacle_info(at, timestep, loc, move, duration));
     // And make sure the propagator wakes up when becomes set.
     attach(s, at, watch<&P::wake_obstacle>(ci, Wt_IDEM));
+    return ci;
     */
-    return bi;
   }
 
   bool propagate(vec<clause_elt>& confl) {
@@ -399,6 +420,7 @@ public:
       }
     }
     coord.restore_agent_with(agent_id, coord.sipp_pf.path);
+    // assert(!incumbent_conflicts_with<true>(obs_stack));
     return true;
   }
 

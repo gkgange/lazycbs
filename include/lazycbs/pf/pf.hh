@@ -37,7 +37,7 @@ struct pf {
   typedef std::pair<int, Move> Step;
   typedef vec<Step> Path;
 
-  static int path_cost(const Path& path) { return path.last().first; }
+  static int path_cost(const Path& path) { return path.size() == 0 ? 0 : path.last().first; }
 
   static Step* find_step(const Path& path, int t) {
     return std::lower_bound(path.begin(), path.end(),

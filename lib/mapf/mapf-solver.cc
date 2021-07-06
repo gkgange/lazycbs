@@ -77,10 +77,11 @@ void log_conflict(MAPF_Solver& mapf) {
       auto b = new_conflict.b;
       fprintf(stderr, "%%%% Adding rectangle: [%d, (%d, %d) |- (%d, %d), %d, %d]\n",
         t, b.st_row, b.st_col,
-              b.st_row + Move_dy[b.dir_v] * b.len_v,
-              b.st_col + Move_dx[b.dir_h] * b.len_h,
+              b.st_row + Move_dy[b.dir_v] * (b.len_v-1),
+              b.st_col + Move_dx[b.dir_h] * (b.len_h-1),
            a1, a2);
     } else {
+      assert(new_conflict.a1 != new_conflict.a2);
       const Agent_PF* pf1 = mapf.pathfinders[new_conflict.a1];
       const Agent_PF* pf2 = mapf.pathfinders[new_conflict.a2];
       fprintf(stderr, "%%%% Adding conflict: [%d, (%d, %d), %s, %d, %d | (%d, %d -> %d, %d) | (%d, %d -> %d, %d) ]\n", new_conflict.timestamp, mapf.row_of(new_conflict.p.loc), mapf.col_of(new_conflict.p.loc), pf::move_str(new_conflict.p.move), new_conflict.a1, new_conflict.a2,
@@ -294,6 +295,7 @@ void MAPF_Solver::printMonotoneSubchain(int dy, int dx, int ai, int t) {
   fprintf(stderr, "\n");
 }
 */
+// Returns <loc, it> where loc is the location *before* step it.
 std::pair<int, pf::Step*> MAPF_Solver::monotoneSubchainStart(pf::Move dx, pf::Move dy, int ai, int loc, int t) const {
   const pf::Path& path(coord.get_path(ai));
 
@@ -303,6 +305,7 @@ std::pair<int, pf::Step*> MAPF_Solver::monotoneSubchainStart(pf::Move dx, pf::Mo
   auto it = pf::find_step(path, t);
   assert(it->first == t);
 
+  loc = coord.nav.inv[loc][it->second];
   while(b != it) {
     auto pred = it-1;
     if(pred->first != t-1 ||
@@ -315,6 +318,7 @@ std::pair<int, pf::Step*> MAPF_Solver::monotoneSubchainStart(pf::Move dx, pf::Mo
   return std::make_pair(loc, it);
 }
 
+// Returns <loc, it>, where loc is the location *after* step it.
 std::pair<int, pf::Step*> MAPF_Solver::monotoneSubchainEnd(pf::Move dy, pf::Move dx, int ai, int loc, int t) const {
   const pf::Path& path(coord.get_path(ai));
 
@@ -324,13 +328,14 @@ std::pair<int, pf::Step*> MAPF_Solver::monotoneSubchainEnd(pf::Move dy, pf::Move
   auto en = path.end();
   assert(it->first == t);
 
-  while(it != en) {
-    auto succ = it+1;
+  auto succ = it+1;
+  while(succ != en) {
     if(succ->first != t+1 ||
        !(dir_mask & (1 << succ->second)))
       return std::make_pair(loc, it);
     loc = coord.nav.delta[loc][succ->second];
     it = succ;
+    succ = it+1;
     ++t;
   }
   return std::make_pair(loc, it);
@@ -460,7 +465,7 @@ vec<Agent_PF::constraint> barrier_constraints(const MAPF_Solver& m, int t0, std:
     {
       const vec<int>& row(m.row_locs[coord.first]);
       auto it = std::upper_bound(row.begin(), row.end(), coord.second,
-                                 [&coords](int col, int loc) { return col < loc; });
+                                 [&coords](int col, int loc) { return col < coords[loc].second; });
       return extract_barrier(m, t0, -coord.second, len,
                              ptr_rev(it-1),
                              ptr_rev(row.begin()-1),
@@ -473,22 +478,34 @@ vec<Agent_PF::constraint> barrier_constraints(const MAPF_Solver& m, int t0, std:
                            std::lower_bound(col.begin(), col.end(), coord.first,
                                             [&coords](int loc, int row) { return coords[loc].first < row; }),
                            col.end(),
-                           [&coords](int loc) { return coords[loc].second; });
+                           [&coords](int loc) { return coords[loc].first; });
   }
   case pf::M_UP:
     {
       const vec<int>& col(m.col_locs[coord.second]);
       auto it = std::upper_bound(col.begin(), col.end(), coord.first,
                                  [&coords](int row, int loc) { return row < coords[loc].first; });
-      return extract_barrier(m, t0, -coord.second, len,
+      return extract_barrier(m, t0, -coord.first, len,
                              ptr_rev(it-1),
                              ptr_rev(col.begin()-1),
-                             [&coords](int loc) { return -coords[loc].second; });
+                             [&coords](int loc) { return -coords[loc].first; });
     }
   default:
     assert(0);
     return vec<Agent_PF::constraint>();
   }
+}
+
+void print_agent_path(MAPF_Solver& m, int ai) {
+  int loc = m.coord.plans[ai].origin;
+  fprintf(stdout, "Agent %d: (%d, %d)", ai, m.row_of(loc), m.col_of(loc));
+  
+  for(pf::Step step : m.coord.get_path(ai)) {
+    // fprintf(f, " %d", loc);
+    loc = m.coord.nav.delta[loc][step.second];
+    fprintf(stdout, " %d:(%d,%d)", step.first, m.row_of(loc), m.col_of(loc));
+  }
+  fprintf(stdout, "\n");
 }
 
 bool MAPF_Solver::checkForConflicts(void) {
@@ -543,9 +560,14 @@ bool MAPF_Solver::checkForConflicts(void) {
       
       if(nmap[loc] >= 0) {
         int aj(nmap[loc]);
+        assert(aj != ai);
 
         pf::Move m_ai = pf::NUM_MOVES;
         pf::Move m_aj = pf::NUM_MOVES;
+
+        printf("%% Vertex conflict: %d x %d at time %d\n", ai, aj, t);
+        print_agent_path(*this, ai);
+        print_agent_path(*this, aj);
         
         // Pretty ugly case checks.
         if(path_it[ai] == coord.get_path(ai).begin() || path_it[aj] == coord.get_path(aj).begin())
@@ -572,11 +594,13 @@ bool MAPF_Solver::checkForConflicts(void) {
         // If there is overhang, adjust the locations.
         while(true) {
           if(Move_dx[m_ai] * (col_of(sV.first) - col_of(sH.first)) < 0) {
+            assert(sV.second->first < t);
             sV.first = coord.nav.delta[sV.first][sV.second->second];
             sV.second++;
             continue;
           }
           if(Move_dy[m_aj] * (row_of(sH.first) - row_of(sV.first)) < 0) {
+            assert(sH.second->first < t);
             sH.first = coord.nav.delta[sH.first][sH.second->second];
             sH.second++;
             continue;
@@ -589,11 +613,13 @@ bool MAPF_Solver::checkForConflicts(void) {
         std::pair<int, pf::Step*> eV(monotoneSubchainEnd(m_ai, m_aj, aj, loc, t));
         while(true) {
           if(Move_dx[m_ai] * (col_of(eH.first) - col_of(eV.first)) < 0) {
+            assert(eV.second->first >= t);
             eV.first = coord.nav.inv[eV.first][eV.second->second];
             eV.second--;
             continue;
           }
           if(Move_dy[m_aj] * (row_of(eV.first) - row_of(eH.first)) < 0) {
+            assert(eH.second->first >= t);
             eH.first = coord.nav.inv[eH.first][eH.second->second];
             eH.second--;
             continue;
@@ -601,12 +627,16 @@ bool MAPF_Solver::checkForConflicts(void) {
           break;
         }
         // Now we've found the biggest feasible rectangles.
-        int t0 = t - abs(row_of(loc) - row_of(sV.first)) - abs(col_of(loc) - col_of(sH.first));
-        new_conflicts.push(conflict::barrier(t0, ai, aj, std::make_pair(row_of(sV.first), col_of(sH.first)),
-                                             m_ai, m_aj,
-                                             1 + abs(col_of(eH.first) - col_of(sH.first)),
-                                             1 + abs(row_of(eV.first) - row_of(sV.first))));
-
+        int dur_H = 1 + abs(col_of(eV.first) - col_of(sV.first));
+        int dur_V = 1 + abs(row_of(eH.first) - row_of(sH.first));
+        if(dur_H > 1 && dur_V > 1) {
+          int t0 = t - abs(row_of(loc) - row_of(sH.first)) - abs(col_of(loc) - col_of(sV.first));
+          new_conflicts.push(conflict::barrier(t0, ai, aj,
+                                              std::make_pair(row_of(sH.first), col_of(sV.first)),
+                                              m_ai, m_aj,
+                                              dur_H, dur_V));
+          goto conflict_handled;
+        }
         }
         // Fall through
         /*
@@ -692,8 +722,9 @@ bool MAPF_Solver::checkForConflicts(void) {
         */
 conflict_is_not_rectangle:
         // FIXME: Re-introduce rectangles/barriers.
-        new_conflicts.push(conflict(t, ai, nmap[loc], pf::M_WAIT, loc));
+        new_conflicts.push(conflict(t, ai, aj, pf::M_WAIT, loc));
 
+conflict_handled:
         /* */
         clear_map(agent_set, prev_loc, cmap);
         clear_map(agent_set, curr_loc, nmap);
@@ -754,8 +785,60 @@ bool MAPF_Solver::checkBarrierViolated(int ai, int t, int p, int delta, int dur)
 
 //enum BarrierDir { UP = 0, LEFT = 1, DOWN = 2, RIGHT = 3 };
 
-geas::patom_t MAPF_Solver::getBarrier(int ai, pf::Move dir, int t, int origin, int dur) {
-  // If this barrier is trivially violated, just return F.
+geas::patom_t MAPF_Solver::getBarrier(int ai, int t, std::pair<int, int> coord, pf::Move dir, int dur) {
+  // TODO: If this barrier is trivially violated, just return F.
+  int origin = pathfinders[ai]->start_pos;
+  if(t == 0 && coord.first == row_of(origin) && coord.second == col_of(origin))
+    return geas::at_False;
+
+  // TODO: Reintroduce approximate
+  int t0 = t - Move_dy[dir] * coord.first - Move_dx[dir] * coord.second;
+  int sel_coord = pf::move_axis(dir) == pf::Ax_HORIZ ? coord.first : coord.second;
+  barrier_key k { ai, dir, sel_coord, t0 };
+  auto it(barrier_map.find(k));
+  int idx;
+  if(it != barrier_map.end()) {
+    idx = (*it).second;
+  } else {
+    idx = barriers.size();
+    barriers.push();
+    barrier_map.insert(std::make_pair(k, idx));
+  }
+
+  // Check if this barrier has already been generated.
+  vec<barrier_data>& candidates(barriers[idx]);
+  for(const barrier_data& b : candidates) {
+    if(b.start == t && b.duration == dur) {
+      // fprintf(stderr, "%%%% HIT!\n");
+      return b.act;
+    }
+  }
+
+  // If not, we'll create it. 
+  geas::patom_t act(s.new_boolvar());
+  // Set up entailment relationships.
+          /*
+#ifdef BARRIER_ENTAIL
+  int end = t + dur;
+  for(const barrier_data& b : candidates) {
+    if(b.start <= t && end <= b.start + b.duration) {
+      // b subsumes this.
+      // fprintf(stderr, "%% Found super-barrier\n");
+      add_clause(s.data, ~b.act, act);
+    }
+    if(t <= b.start && b.start + b.duration <= end) {
+      // fprintf(stderr, "%% Found sub-barrier\n");
+      add_clause(s.data, act, ~b.act);
+    }
+  }
+#endif
+          */
+  vec<Agent_PF::constraint> csts = barrier_constraints(*this, t, coord, dir, dur);
+  pathfinders[ai]->register_barrier(act, csts); 
+  assert(csts.size() > 0);
+  candidates.push(barrier_data { act, t, dur });
+  return act;
+
   /*
   int delta = ml.cols * barrier_dy[dir] + barrier_dx[dir];
   assert(t >= 0);
@@ -824,15 +907,29 @@ geas::patom_t MAPF_Solver::getBarrier(int ai, pf::Move dir, int t, int origin, i
   candidates.push(barrier_data { act, t, dur });
   return act;
   */
-  assert(0);
-  return at_Undef;
 }
 
 bool MAPF_Solver::addConflict(void) {
   HL_conflicts++;
   for(auto new_conflict : new_conflicts) {
     if(new_conflict.type == C_BARRIER) {
-      assert(0);
+      const barrier_info& b = new_conflict.b;
+
+      // Check the four barriers.
+      vec<geas::clause_elt> atoms;
+      atoms.push(getBarrier(new_conflict.a2, new_conflict.timestamp,
+                                                          std::make_pair(b.st_row, b.st_col),
+                                                          b.dir_h, b.len_h));
+      atoms.push(getBarrier(new_conflict.a2, new_conflict.timestamp + b.len_v - 1,
+                            std::make_pair(b.st_row + Move_dy[b.dir_v] * (b.len_v-1), b.st_col),
+                                                          b.dir_h, b.len_h));
+      atoms.push(getBarrier(new_conflict.a1, new_conflict.timestamp,
+                                                          std::make_pair(b.st_row, b.st_col),
+                                                          b.dir_v, b.len_v));
+      atoms.push(getBarrier(new_conflict.a1, new_conflict.timestamp + b.len_h - 1,
+                            std::make_pair(b.st_row, b.st_col + Move_dx[b.dir_h] * (b.len_h-1)),
+                                                          b.dir_v, b.len_v));
+      add_clause(*s.data, atoms);
 #if 0
       int aH(new_conflict.a1);
       int aV(new_conflict.a2);

@@ -199,7 +199,8 @@ class MAPF_Solver {
   bool addConflict(void);
   bool processCore(vec<geas::patom_t>& core);
       
-  geas::patom_t getBarrier(int ai, pf::Move dir, int t0, int p0, int dur);
+  geas::patom_t getBarrier(int ai, int t0, std::pair<int, int> coord, pf::Move dir, int dur);
+ 
   bool checkBarrierViolated(int ai, int t, int p, int delta, int dur) const;
 
   std::pair<int, pf::Step*> monotoneSubchainStart(pf::Move dx, pf::Move dy, int ai, int loc, int t) const;
