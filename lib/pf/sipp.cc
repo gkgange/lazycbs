@@ -6,8 +6,8 @@ namespace mapf {
 
 // Find the index just after the last Vertex blockage.
 int find_goal_index(sipp_loc& loc) {
-  int idx = loc.size()-2;
-  while(idx > 0 && !loc[idx].may_wait())
+  int idx = loc.size()-1;
+  while(idx > 0 && loc[idx-1].may_wait())
     --idx;
   return idx;
 }

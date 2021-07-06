@@ -565,9 +565,11 @@ bool MAPF_Solver::checkForConflicts(void) {
         pf::Move m_ai = pf::NUM_MOVES;
         pf::Move m_aj = pf::NUM_MOVES;
 
+        /*
         printf("%% Vertex conflict: %d x %d at time %d\n", ai, aj, t);
         print_agent_path(*this, ai);
         print_agent_path(*this, aj);
+        */
         
         // Pretty ugly case checks.
         if(path_it[ai] == coord.get_path(ai).begin() || path_it[aj] == coord.get_path(aj).begin())
