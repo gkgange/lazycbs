@@ -7,6 +7,7 @@
 
 #define DEBUG_UC
 // #define MAPF_NO_RECTANGLES
+#define MAPF_USE_TARGETS
 
 namespace mapf {
 
@@ -509,6 +510,7 @@ void print_agent_path(MAPF_Solver& m, int ai) {
 }
 
 bool MAPF_Solver::checkForConflicts(void) {
+  coord.reset();
   int pMax = maxPathLength();
   
   vec<int> prev_loc;
@@ -570,6 +572,20 @@ bool MAPF_Solver::checkForConflicts(void) {
         print_agent_path(*this, ai);
         print_agent_path(*this, aj);
         */
+#ifdef MAPF_USE_TARGETS
+        if((path_it[ai] == path_en[ai] && t > pathfinders[ai]->cost.ub(s.data->ctx()))  ||
+           (path_it[aj] == path_en[aj] && t > pathfinders[aj]->cost.ub(s.data->ctx()))) {
+          if(path_it[ai] != path_en[ai])
+            std::swap(ai, aj);
+          assert(path_it[ai] == path_en[ai]);
+          fprintf(stderr, "%% Target conflict %d via %d\n", aj, ai);
+          new_conflicts.push(conflict::barrier(t, ai, aj,
+                                              std::make_pair(0, 0),
+                                               pf::M_WAIT, pf::M_WAIT,
+                                              0, 0));
+          goto conflict_handled;
+        }
+#endif
         
         // Pretty ugly case checks.
         if(path_it[ai] == coord.get_path(ai).begin() || path_it[aj] == coord.get_path(aj).begin())
@@ -727,12 +743,14 @@ conflict_is_not_rectangle:
         new_conflicts.push(conflict(t, ai, aj, pf::M_WAIT, loc));
 
 conflict_handled:
-        /* */
+        /* /
         clear_map(agent_set, prev_loc, cmap);
         clear_map(agent_set, curr_loc, nmap);
-        /* // This breaks _something_, haven't figured out what yet.
-        cmap[prev_loc[ai]] = -1;
         */
+        /* */
+        cmap[prev_loc[ai]] = -1;
+        nmap[loc] = aj;
+        /* */
         agent_set.remove(ai);
         // return true;
         continue;
@@ -750,13 +768,13 @@ conflict_handled:
           // Edge conflict
           // new_conflicts.push(conflict(t-1, ai, cmap[loc], loc, rloc));
           new_conflicts.push(conflict(t, ai, cmap[loc], coord.nav.move_dir(rloc, loc), loc));
-          /* */
+          /* /
           clear_map(agent_set, prev_loc, cmap);
           clear_map(agent_set, curr_loc, nmap);
-          /* /
+          / */
           cmap[prev_loc[ai]] = -1;
           nmap[curr_loc[ai]] = -1;
-          */
+          /* */
           agent_set.remove(ai);
           // return true;
           continue;
@@ -916,6 +934,23 @@ bool MAPF_Solver::addConflict(void) {
   for(auto new_conflict : new_conflicts) {
     if(new_conflict.type == C_BARRIER) {
       const barrier_info& b = new_conflict.b;
+#ifdef MAPF_USE_TARGETS
+      if(b.dir_h == pf::M_WAIT) { // Actually a target conflict.
+        int ai = new_conflict.a1;
+        int aj = new_conflict.a2;
+          target_key k(ai, aj);
+          auto it = target_map.find(k);
+          if(it != target_map.end()) {
+            pathfinders[aj]->tighten_target(it->second, new_conflict.timestamp);
+          } else {
+            int loc = pathfinders[ai]->goal_pos;
+            int idx = pathfinders[aj]->register_target(loc, pathfinders[ai]->cost,
+                                                       new_conflict.timestamp);
+            target_map.insert(std::make_pair(k, idx));
+          }
+          continue;
+      }
+#endif
 
       // Check the four barriers.
       vec<geas::clause_elt> atoms;

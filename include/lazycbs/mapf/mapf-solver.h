@@ -25,6 +25,26 @@ class MAPF_Solver {
     geas::pval_t lb;
   };
   
+  struct target_key {
+    target_key(int _target, int _visitor)
+      : target(_target), visitor(_visitor) { }
+    int target;
+    int visitor;
+  };
+  struct target_key_hasher {
+    size_t operator()(const target_key& k) const {
+      size_t h(5331);
+      h = ((h<<5) + k.target)^h;
+      h = ((h<<5) + k.visitor)^h;
+      return h;
+    }
+  };
+  struct target_key_eq {
+    bool operator()(const target_key& x, const target_key& y) const {
+      return x.target == y.target && x.visitor == y.visitor;
+    }
+  };
+ 
   struct cons_key {
     int timestamp;
     pf::Move move;
@@ -167,6 +187,7 @@ class MAPF_Solver {
   vec< vec<barrier_data> > barriers;
   std::unordered_map<cons_key, int, cons_key_hasher, cons_key_eq> cons_map;
   std::unordered_map<barrier_key, int, barrier_key_hasher, barrier_key_eq> barrier_map;
+  std::unordered_map<target_key, int, target_key_hasher, target_key_eq> target_map;
   // conflict new_conflict;
   vec<conflict> new_conflicts;
   p_sparseset agent_set;

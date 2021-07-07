@@ -21,10 +21,10 @@ CXXFLAGS += -I $(GEAS_ROOT)/include
 LFLAGS += -L $(ECBS_ROOT) -L $(GEAS_ROOT) -L . -lboost_program_options -lboost_graph -lgeas -lecbs
 LFLAGS += $(PROF_FLAGS)
 
-COPTIMIZE = -O3 -march=native -ffast-math -funroll-loops # -freorder-blocks-and-partition
+#COPTIMIZE = -O3 -march=native -ffast-math -funroll-loops # -freorder-blocks-and-partition
 #COPTIMIZE = -O2
 #COPTIMIZE = -O1
-#COPTIMIZE = -O0
+COPTIMIZE = -O0
 #COPTIMIZE += -DNDEBUG
 COPTIMIZE += $(PROF_FLAGS)
 CXXFLAGS += $(COPTIMIZE)

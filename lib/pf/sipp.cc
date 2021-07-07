@@ -251,6 +251,15 @@ void sipp_explainer::explain(int origin, int goal, int Tub, sipp_ctx& state,
   sipp_loc& goal_loc(get(goal));
   sipp_interval* goal_itv(goal_loc.reach(Tub));
 
+  // First, check if some constraint outright blocks the goal.
+  sipp_interval* goal_cut(goal_itv);
+  for(; goal_cut != goal_loc.end(); ++goal_cut) {
+    if(goal_cut->constraints & pf::C_VERT) {
+      out_expl.push(cst(goal, goal_cut->start, pf::M_WAIT));
+      return;
+    }
+  }
+
   goal_itv->next_ex = Tub;
   mark_heap.insert(IntId(goal, goal_itv - goal_loc.begin()));
   
@@ -283,7 +292,7 @@ void sipp_explainer::explain(int origin, int goal, int Tub, sipp_ctx& state,
           continue;
 
         auto pred_it = pred_loc.reach(pred_reach);
-        while(Tmin < pred_it->start+1) {
+        while(Tmin < pred_it->start) {
           if(pred_reach > pred_it->next_ex) {
             pred_it->next_ex = pred_reach;
             mark_heap.insert_or_decrease(IntId(p.second, pred_it - pred_loc.begin()));
@@ -305,6 +314,7 @@ void sipp_explainer::explain(int origin, int goal, int Tub, sipp_ctx& state,
 
   get(origin)[0].reach = 0;
   collect_heap.insert(IntId(origin, 0));
+  assert(state[origin][0].next_ex < 0);
 
   while(!collect_heap.empty()) {
     IntId curr(collect_heap.top());
@@ -327,10 +337,10 @@ void sipp_explainer::explain(int origin, int goal, int Tub, sipp_ctx& state,
         // vertex constraint or target constraint is necessary.
         if(curr_loc.Tend <= t_start) {
           // Prefer target constraints.
-          out_expl.push(cst(curr.loc, t_start, M_LOCK));
+          out_expl.push(cst(curr.loc, curr_it->next_ex, M_LOCK));
         } else {
           assert(curr_it->constraints & pf::C_VERT);
-          out_expl.push(cst(curr.loc, t_start, pf::M_WAIT));
+          out_expl.push(cst(curr.loc, curr_it->start, pf::M_WAIT));
         }
         break;
       }
@@ -355,7 +365,7 @@ void sipp_explainer::explain(int origin, int goal, int Tub, sipp_ctx& state,
         if(t_succ < succ_it->reach) {
           // We only want to take an edge conflict if we can't
           // handle it with a vertex or target constraint.
-          if(t_succ < succ_it->next_ex
+          if(t_succ <= succ_it->next_ex
              && t_succ < succ_loc.Tend
              && !(succ_it->constraints & pf::C_VERT)) {
             assert(succ_it->constraints & (1 << p.first));

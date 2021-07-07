@@ -48,6 +48,12 @@ class Agent_PF : public propagator, public prop_inst<Agent_PF> {
   struct gen_barrier_info {
     vec<constraint> constraints;
   };
+
+  struct target_info {
+    int loc;
+    geas::intvar time;
+    int threshold;
+  };
   
   struct mutex_info {
     int loc;
@@ -123,8 +129,40 @@ class Agent_PF : public propagator, public prop_inst<Agent_PF> {
     return Wt_Keep;
   }
 
+  watch_result wake_target(int ti) {
+    const target_info& t(targets[ti]);
+    if(ub(t.time) <= t.threshold) {
+      if(obs_tl < obs_stack.size())
+        restore_stack();
+      assert(ub(t.time) < sctx[t.loc].Tend);
+      obs_stack.push(constraint(pf::NUM_MOVES, ti, sctx[t.loc].Tend));
+      set(obs_tl, obs_stack.size());
+      sctx[t.loc].Tend = ub(t.time);
+      queue_prop();
+    }
+    return Wt_Keep;
+  }
+  
+ 
   void expl_length(int tl, pval_t p, vec<clause_elt>& expl) {
     // For now, just collect the set of constraints that were active.
+#ifdef MAPF_BETTER_EXPLANATIONS
+    vec<sipp_explainer::cst> ex_csts;
+    // Temporarily reset the obs_stack.
+    set_stack_to(tl);
+    coord.sipp_ex.explain(start_pos, goal_pos, cost.lb_of_pval(p)-1,
+                          sctx, f_heur, r_heur, ex_csts);
+    for(auto c : ex_csts) {
+      if(c.move == sipp_explainer::M_LOCK) {
+        // Target constraint
+        int ti = target_map.find(c.loc)->second;
+        EX_PUSH(expl, targets[ti].time > c.time);
+      } else {
+        geas::patom_t at = (*reasons[c.loc].find(c.time)).value[(pf::Move) c.move];
+        EX_PUSH(expl, ~at);
+      }
+    }
+#endif
     obstacle_atoms(tl, expl);
     /* // FIXME
 #ifndef MAPF_BETTER_EXPLANATIONS
@@ -142,18 +180,35 @@ class Agent_PF : public propagator, public prop_inst<Agent_PF> {
     for(int si = 0; si < tl; ++si) {
       // EX_PUSH(expl, ~obstacles[obs_stack[si]].at);
       constraint c = obs_stack[si];
-      geas::patom_t at = (*reasons[c.loc].find(c.time)).value[c.move];
-      EX_PUSH(expl, ~at);
+      if(c.move == pf::NUM_MOVES) {
+        // Actually a target constraint
+        const target_info& t(targets[c.loc]);
+        // FIXME: Track the relevant threshold instead.
+        EX_PUSH(expl, t.time > ub(t.time));
+      } else {
+        geas::patom_t at = (*reasons[c.loc].find(c.time)).value[c.move];
+        EX_PUSH(expl, ~at);
+      }
     }
   }
 
+  void set_stack_to(int tl) {
+    for(int si = tl; si < obs_stack.size(); ++si) {
+      const constraint& c(obs_stack[si]);
+      if(c.move == pf::NUM_MOVES) {
+        // Target constraint. Reset to the old Tend.
+        int loc = targets[c.loc].loc;
+        if(sctx[loc].Tend < c.time)
+          sctx[loc].Tend = c.time;
+      } else {
+        sctx.release(c.move, c.loc, c.time);
+      }
+    }
+  }
   void restore_stack(void) {
     // Iteration order doesn't matter, because the multiset of pops
     // is the same.
-    for(int si = obs_tl; si < obs_stack.size(); ++si) {
-      const constraint& c(obs_stack[si]);
-      sctx.release(c.move, c.loc, c.time);
-    }
+    set_stack_to(obs_tl);
     obs_stack.shrink(obs_stack.size() - obs_tl);
   }
 
@@ -340,6 +395,7 @@ public:
 
 
   void update_incumbent(void) {
+    coord.reset();
     if(incumbent_path_num != coord.plans[agent_id].path_num) {
       incumbent_path_num = coord.plans[agent_id].path_num;
 
@@ -362,6 +418,17 @@ public:
       reasons[loc].add(timestep, reason_cell());
   }
 
+  int register_target(int loc, geas::intvar time, int threshold) {
+    int ti = targets.size();
+    targets.push(target_info { loc, time, threshold });
+    target_map.insert(std::make_pair(loc, ti));
+    time.attach(E_UB, watch<&P::wake_target>(ti, Wt_IDEM));
+    return ti;
+  }
+  void tighten_target(int ti, int threshold) {
+    assert(threshold > targets[ti].threshold);
+    targets[ti].threshold = threshold;
+  }
   int register_obstacle(patom_t at, int timestep, pf::Move move, int loc) {
     int ci(obstacles.size());
     // Add the new constraint to the pool
@@ -414,7 +481,7 @@ public:
 
     // Otherwise, update the lower bound.
     if(lb(cost) < pathC) {
-      if(!set_lb(cost, pathC, expl<&P::expl_length>(obs_stack.size()))) {
+      if(!set_lb(cost, pathC, expl<&P::expl_length>(obs_stack.size(), expl_thunk::Ex_BTPRED))) {
         coord.restore_agent(agent_id);
         return false;
       }
@@ -457,8 +524,9 @@ public:
 
   intvar cost;
 
-  vec<obstacle_info> obstacles; // The registered obstacles
+  vec<obstacle_info> obstacles; // The registered obstacles, and other kinds of constraints
   vec<barrier_info> barriers;
+  vec<target_info> targets;
   vec<constraint> obs_stack;           // The history of pushed obstacles
   Tint obs_tl;                  // How big _should_ obs_stack be?
 
@@ -479,6 +547,7 @@ public:
 
   // Needs to be kept synchronized with sctx.
   vec<reason_map> reasons;
+  std::unordered_map<int, int> target_map;
 };
 
 }

@@ -55,7 +55,6 @@ class coordinator {
 
   // Restore consistency.
   void reset(void);
-
   
   vec<history> plans;
   vec<int> changes;

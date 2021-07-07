@@ -7,7 +7,7 @@ namespace mapf {
 // Alternate SIPP-esque pathfinder.
 struct sipp_interval {
   sipp_interval(int _start, unsigned char _constraints = 0)
-    : start(_start), constraints(_constraints) { }
+    : start(_start), constraints(_constraints), tag(0) { }
 
   // Persistent data
   inline bool is_allowed(pf::Move m) const {
@@ -154,8 +154,8 @@ public:
     cst(int _loc, int _time, unsigned _move)
       : loc(_loc), time(_time), move(_move) { }
     unsigned loc;
-    int time : 24;
-    unsigned move : 8;
+    int time;
+    unsigned move;
   };
   struct mark_env {
     mark_env(void)
@@ -178,10 +178,10 @@ public:
     sipp_loc* ctx;
 
     sipp_interval& get(IntId s) const { return ctx[s.loc].i[s.idx]; }
-    int H(IntId s) const { return get(s).next_ex; }
+    int H(IntId s) const { return get(s).reach; }
 
     // Currently ignoring the reservation table.
-    bool lt(IntId s, IntId t) const {return H(s) > H(t); }
+    bool lt(IntId s, IntId t) const {return H(s) < H(t); }
     unsigned pos(IntId s) const { return get(s).tag; }
     unsigned pos(IntId s, unsigned t) { return get(s).tag = t; }
   };
