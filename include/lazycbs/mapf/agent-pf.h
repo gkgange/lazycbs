@@ -1,8 +1,8 @@
 #ifndef GEAS_AGENT__PF_H
 #define GEAS_AGENT__PF_H
+#include <iostream>
 #include <utility>
 #include <functional>
-#include "single_agent_ecbs.h"
 
 #include <geas/engine/propagator.h>
 #include <geas/engine/propagator_ext.h>
@@ -38,6 +38,7 @@ class Agent_PF : public propagator, public prop_inst<Agent_PF> {
     int time;
   };
  protected:
+
 
   struct barrier_info {
     barrier_info(geas::patom_t _at) : at(_at) { }
@@ -103,15 +104,33 @@ class Agent_PF : public propagator, public prop_inst<Agent_PF> {
 
   // In both cases, only wake up if the new obstacle would invalidate
   // the incumbent.
+  inline bool is_active(void) const { return coord.is_active(agent_id); }
+
   watch_result wake_cost(int _xi) {
     // Only wake up if the incumbent is invalidated.
+    if(!is_active())
+      return Wt_Keep;
+    coord.reset();
     if(ub(cost) < pathCost()) {
       queue_prop();
     }
     return Wt_Keep;
   }
 
+  watch_result wake_cost_lb(int _xi) {
+    if(!is_active())
+      return Wt_Keep;
+    coord.reset();
+    if(lb(cost) > pathCost()) {
+      apply_delay(lb(cost));
+      queue_prop();
+    }
+    return Wt_Keep;
+  }
+
   watch_result wake_obstacle(int ci) {
+    if(!is_active())
+      return Wt_Keep;
     apply_obstacle(ci);
     if(incumbent_conflicts_with(ci)) {
       queue_prop();
@@ -120,6 +139,8 @@ class Agent_PF : public propagator, public prop_inst<Agent_PF> {
   }
 
   watch_result wake_barrier(int bi) {
+    if(!is_active())
+      return Wt_Keep;
     if(obs_tl < obs_stack.size())
       restore_stack();
     assert(obs_tl == obs_stack.size());
@@ -130,6 +151,8 @@ class Agent_PF : public propagator, public prop_inst<Agent_PF> {
   }
 
   watch_result wake_target(int ti) {
+    if(!is_active())
+      return Wt_Keep;
     const target_info& t(targets[ti]);
     if(ub(t.time) <= t.threshold) {
       if(obs_tl < obs_stack.size())
@@ -143,10 +166,27 @@ class Agent_PF : public propagator, public prop_inst<Agent_PF> {
     return Wt_Keep;
   }
   
- 
+  void expl_length_bound(int lb, vec<clause_elt>& expl) {
+    vec<sipp_explainer::cst> ex_csts;
+    coord.sipp_ex.explain(start_pos, goal_pos, lb,
+                          sctx, f_heur, r_heur, ex_csts);
+    for(auto c : ex_csts) {
+      if(c.move == sipp_explainer::M_LOCK) {
+        // Target constraint
+        int ti = target_map.find(c.loc)->second;
+        EX_PUSH(expl, targets[ti].time > c.time);
+      } else {
+        geas::patom_t at = (*reasons[c.loc].find(c.time)).value[(pf::Move) c.move];
+        EX_PUSH(expl, ~at);
+      }
+    }
+  }
   void expl_length(int tl, pval_t p, vec<clause_elt>& expl) {
     // For now, just collect the set of constraints that were active.
 #ifdef MAPF_BETTER_EXPLANATIONS
+    // Temporarily reset the obs_stack.
+    set_stack_to(tl);
+    expl_length_bound(cost.lb_of_pval(p)-1, expl);
     vec<sipp_explainer::cst> ex_csts;
     // Temporarily reset the obs_stack.
     set_stack_to(tl);
@@ -162,8 +202,9 @@ class Agent_PF : public propagator, public prop_inst<Agent_PF> {
         EX_PUSH(expl, ~at);
       }
     }
-#endif
+#else
     obstacle_atoms(tl, expl);
+#endif
     /* // FIXME
 #ifndef MAPF_BETTER_EXPLANATIONS
     obstacle_atoms(tl, expl);
@@ -176,15 +217,32 @@ class Agent_PF : public propagator, public prop_inst<Agent_PF> {
     */
   }
 
+ public:
+  void debug_print_path(const pf::Path& path) const {
+    int loc = start_pos;
+    std::cout << agent_id << ":" << loc;
+    for(pf::Step s : path) {
+      loc = coord.nav.delta[loc][s.second];
+      std::cout << "," << s.first << "=>" << loc;
+    }
+    std::cout << std::endl;
+  }
+  
+ protected:
   void obstacle_atoms(int tl, vec<clause_elt>& expl) {
     for(int si = 0; si < tl; ++si) {
       // EX_PUSH(expl, ~obstacles[obs_stack[si]].at);
       constraint c = obs_stack[si];
       if(c.move == pf::NUM_MOVES) {
-        // Actually a target constraint
-        const target_info& t(targets[c.loc]);
-        // FIXME: Track the relevant threshold instead.
-        EX_PUSH(expl, t.time > ub(t.time));
+        // Either target or delay constraint.
+        if(c.loc < 0) {
+          // Delay constraint
+          EX_PUSH(expl, cost < lb(cost));
+        } else {
+          const target_info& t(targets[c.loc]);
+          // FIXME: Track the relevant threshold instead.
+          EX_PUSH(expl, t.time > ub(t.time));
+        }
       } else {
         geas::patom_t at = (*reasons[c.loc].find(c.time)).value[c.move];
         EX_PUSH(expl, ~at);
@@ -196,10 +254,27 @@ class Agent_PF : public propagator, public prop_inst<Agent_PF> {
     for(int si = tl; si < obs_stack.size(); ++si) {
       const constraint& c(obs_stack[si]);
       if(c.move == pf::NUM_MOVES) {
-        // Target constraint. Reset to the old Tend.
-        int loc = targets[c.loc].loc;
-        if(sctx[loc].Tend < c.time)
-          sctx[loc].Tend = c.time;
+        if(c.loc < 0) {
+          // Goal delay constraint
+          if(c.time >= goal_min)
+            continue;
+          auto it = sctx[goal_pos].reach(goal_min);
+          assert(it->start == goal_min);
+          assert(goal_min == 0 || it->constraints & pf::C_DELAY);
+
+          it->constraints &= ~pf::C_DELAY;
+          if(c.time > 0) {
+            it = sctx[goal_pos].reach(c.time);
+            assert(it->start == c.time);
+            it->constraints |= pf::C_DELAY;
+          }
+          goal_min = c.time;
+        } else {
+          // Target constraint. Reset to the old Tend.
+          int loc = targets[c.loc].loc;
+          if(sctx[loc].Tend < c.time)
+            sctx[loc].Tend = c.time;
+        }
       } else {
         sctx.release(c.move, c.loc, c.time);
       }
@@ -230,6 +305,24 @@ class Agent_PF : public propagator, public prop_inst<Agent_PF> {
       auto it = reasons[loc].find(time);
       (*it).value[move] = reason;
       obs_stack.push(constraint(move, loc, time));
+    }
+  }
+
+  void apply_delay(int t) {
+    // Make sure we're starting from a consistent state.
+    if(obs_tl < obs_stack.size())
+      restore_stack();
+    if(goal_min < t) {
+      obs_stack.push(constraint(pf::NUM_MOVES, -1, goal_min));
+      if(goal_min > 0) {
+        auto it = sctx[goal_pos].reach(goal_min);
+        assert(it->start == goal_min);
+        it->constraints &= ~pf::C_DELAY;
+      }
+      goal_min = t;
+      set(obs_tl, obs_stack.size());
+      auto& itv = sctx._create(goal_pos, t);
+      itv.constraints |= pf::C_DELAY;
     }
   }
 
@@ -371,8 +464,10 @@ public:
     , f_heur(coord.nav.fwd_heuristic(goal_location))
     , r_heur(coord.nav.rev_heuristic(start_location))
     , reasons(coord.nav.size())
+    , goal_min(0)
     {
     cost.attach(E_UB, watch<&P::wake_cost>(0, Wt_IDEM));
+    //    cost.attach(E_LB, watch<&P::wake_cost_lb>(0, Wt_IDEM));
     int pathC = coord.sipp_pf.search(start_pos, goal_pos,
                                      sctx, f_heur, coord.res_table.reserved);
     if(pathC == INT_MAX)
@@ -392,7 +487,6 @@ public:
 
   bool check_sat(ctx_t& ctx);
   bool check_unsat(ctx_t& ctx) { return !check_sat(ctx); };
-
 
   void update_incumbent(void) {
     coord.reset();
@@ -426,6 +520,9 @@ public:
     return ti;
   }
   void tighten_target(int ti, int threshold) {
+    if(threshold <= targets[ti].threshold) {
+      debug_print_path(coord.get_path(agent_id));
+    }
     assert(threshold > targets[ti].threshold);
     targets[ti].threshold = threshold;
   }
@@ -467,17 +564,36 @@ public:
     if(obs_tl < obs_stack.size())
       restore_stack();
 
+    /*
+    if(agent_id==49)
+      debug_print_path(coord.get_path(agent_id));
+    */
+    int c_lb = lb(cost);
     coord.hide_agent(agent_id);
     int pathC = coord.sipp_pf.search(start_pos, goal_pos,
                                      sctx, f_heur, coord.res_table.reserved);
+    /*
+    if(goal_min > 0)
+      fprintf(stderr, "%% Agent %d arrived %d, earliest %d.\n", agent_id, pathC, goal_min);
+    */
+    /*
+    if(pathC < c_lb) {
+      fprintf(stderr, "%% Uh oh: c_lb(%d), pathC(%d).\n", c_lb, pathC);
+      coord.sipp_pf.path.push(pf::Step(c_lb, pf::M_WAIT));
+      pathC = c_lb;
+    }
+    */
     if(pathC == INT_MAX) {
       coord.restore_agent(agent_id);
 
       // Failed to produce any path
       // TODO: Explanation
+      fprintf(stderr, "%% PING!!\n");
       obstacle_atoms(obs_stack.size(), confl);
       return false;
     }
+    //if(agent_id==49)
+    //  debug_print_path(coord.sipp_pf.path);
 
     // Otherwise, update the lower bound.
     if(lb(cost) < pathC) {
@@ -523,6 +639,8 @@ public:
   int goal_pos;
 
   intvar cost;
+
+  int goal_min;
 
   vec<obstacle_info> obstacles; // The registered obstacles, and other kinds of constraints
   vec<barrier_info> barriers;

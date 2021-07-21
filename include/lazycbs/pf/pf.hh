@@ -31,7 +31,8 @@ struct pf {
     // Edge constraints
     C_NONE = 0,
     C_RIGHT = 1, C_LEFT = 2, C_DOWN = 4, C_UP = 8,
-    C_VERT = 16
+    C_VERT = 16,
+    C_DELAY = 32 // Special case for delayed 'goal' state.
   };
 
   typedef std::pair<int, Move> Step;
@@ -97,7 +98,7 @@ struct constraints {
 
   // Location -> (Time -> Constraints)
   inline bool is_allowed(pf::Move m, int loc, unsigned time) const;
-  inline unsigned char score(pf::Move m, int loc, unsigned time) const;
+  inline int score(pf::Move m, int loc, unsigned time) const;
 
   void forbid(pf::Move m, int loc, unsigned time);
   void lock(int loc, unsigned time);
@@ -123,7 +124,10 @@ inline bool constraints::is_allowed(pf::Move m, int loc, unsigned time) const {
   return ! ( (*it).value & ((1 << m)|pf::C_VERT) );
 }
 
-inline unsigned char constraints::score(pf::Move m, int loc, unsigned time) const {
+inline int constraints::score(pf::Move m, int loc, unsigned time) const {
+  if(lock_time[loc] <= time)
+    return 1 + time - lock_time[loc];
+
   auto& map = masks[loc];
   auto it = map.find(time);
   if(it == map.end())

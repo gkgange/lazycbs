@@ -1,6 +1,7 @@
 #ifndef LAZYCBS__COORDINATOR__H
 #define LAZYCBS__COORDINATOR__H
 
+#include <geas/utils/bitops.h>
 #include <geas/solver/solver.h>
 #include <geas/engine/propagator.h>
 #include <lazycbs/pf/pf.hh>
@@ -12,6 +13,16 @@ namespace mapf {
 // incumbent paths and updating the reservation table.
 class coordinator {
  public:
+  struct agent_cell {
+    agent_cell(int _block, uint32_t _mask)
+    : block(_block), mask(_mask) { }
+    agent_cell(int ai)
+    : block(geas::B32::block(ai)), mask(geas::B32::bit(ai)) { }
+
+    int block;
+    uint32_t mask;
+  };
+  
  coordinator(geas::solver& _s, const navigation& _nav)
    : s(_s), nav(_nav), res_table(nav.size())
     , sipp_pf(nav), sipp_ex(nav)
@@ -34,6 +45,10 @@ class coordinator {
     vec<pf::Path> paths;
   };
 
+  inline bool is_active(int agent) const {
+    return active_agents[geas::B32::block(agent)] & geas::B32::bit(agent);
+  }
+
   int get_origin(int agent) const { return plans[agent].origin; }
   const pf::Path& get_path(int agent) const { return plans[agent].paths.last(); }
 
@@ -45,8 +60,16 @@ class coordinator {
   void restore_agent(int agent);
   void restore_agent_with(int agent, const pf::Path& new_plan);
 
+  void make_active(const agent_cell* b, const agent_cell* e);
+  void rem_active(const agent_cell* b, const agent_cell* e);
+  void clear_active(void);
+  void dump_active(vec<agent_cell>& out);
+  
   geas::solver& s;
 
+  vec<uint32_t> active_agents;
+  vec<int> active_words;
+  
   const navigation& nav;
   reservation::table res_table;
 

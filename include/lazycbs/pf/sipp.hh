@@ -14,7 +14,7 @@ struct sipp_interval {
     return ! (constraints & ( (1 << m) | pf::C_VERT));
   }
   inline bool may_wait(void) const {
-    return !(constraints & pf::C_VERT);
+    return !(constraints & (pf::C_VERT | pf::C_DELAY));
   }
   int start; // When does the interval start?
   unsigned char constraints; // What constraints are active?

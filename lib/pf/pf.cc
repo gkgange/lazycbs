@@ -138,12 +138,14 @@ void table::release(const navigation& nav, int origin, const pf::Path& path) {
       _dec_move(prev, t, move_inv[step.second]);
     prev = curr;
   }
+  reserved.lock(prev, INT_MAX);
 }
 
 void table::reserve(const navigation& nav, int origin, const pf::Path& path) {
   int prev = origin;
+  int t = 0;
   for(pf::Step step : path) {
-    int t = step.first;
+    t = step.first;
     int curr = nav.delta[prev][step.second];
     // Both c_cell and p_cell should exist.
     _inc_move(curr, t, pf::M_WAIT);
@@ -151,6 +153,7 @@ void table::reserve(const navigation& nav, int origin, const pf::Path& path) {
       _inc_move(prev, t, move_inv[step.second]);
     prev = curr;
   }
+  reserved.lock(prev, t);
 }
 
 }
@@ -261,7 +264,7 @@ int simple_pathfinder::search(int origin, int goal, int* heur,
     for(auto p : successors(loc)) {
       if(csts.is_allowed(p.first, p.second, t+1)) {
         cell_ref succ = get(p.second, t+1);
-        unsigned char score_inc = reservation.score(p.first, p.second, t+1);
+        int score_inc = reservation.score(p.first, p.second, t+1);
 
         if(succ.loc() == goal && t+1 >= goal_time)
           return t+1;

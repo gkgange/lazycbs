@@ -232,6 +232,7 @@ class MAPF_Solver {
 };
 
 bool MAPF_MinCost(MAPF_Solver& s);
+bool MAPF_MinCost_REC(MAPF_Solver& s);
 bool MAPF_MinMakespan(MAPF_Solver& s);
 bool MAPF_MaxDeadlines(MAPF_Solver& s);
 

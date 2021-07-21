@@ -7,7 +7,7 @@
 
 #define DEBUG_UC
 // #define MAPF_NO_RECTANGLES
-#define MAPF_USE_TARGETS
+//#define MAPF_USE_TARGETS
 
 namespace mapf {
 
@@ -520,25 +520,29 @@ bool MAPF_Solver::checkForConflicts(void) {
   vec<pf::Step*> path_en;
 
   int Tnext = INT_MAX;
+  agent_set.sz = 0;
   for(int ai = 0; ai < pathfinders.size(); ++ai) {
-    int loc = coord.plans[ai].origin;
     const pf::Path& path(coord.get_path(ai));
-
-    assert(nmap[loc] < 0); // Shouldn't be any conflicts at t0.
-    curr_loc.push(loc);
-    prev_loc.push(loc);
-    nmap[loc] = ai;
-
     auto it = path.begin();
     auto en = path.end();
-    if(it != en)
-      Tnext = std::min(Tnext, it->first);
     path_it.push(it);
     path_en.push(en);
+
+    int loc = coord.plans[ai].origin;
+    curr_loc.push(loc);
+    prev_loc.push(loc);
+
+    if(!coord.is_active(ai))
+      continue;
+    agent_set.insert(ai);
+    if(it != en)
+      Tnext = std::min(Tnext, it->first);
+    assert(nmap[loc] < 0); // Shouldn't be any conflicts at t0.
+    nmap[loc] = ai;
   }
 
   // All agents are interesting.
-  agent_set.sz = pathfinders.size();
+  // agent_set.sz = pathfinders.size();
 
   while(Tnext < INT_MAX) {
     int t = Tnext;
@@ -572,13 +576,18 @@ bool MAPF_Solver::checkForConflicts(void) {
         print_agent_path(*this, ai);
         print_agent_path(*this, aj);
         */
+        if(path_it[ai] == path_en[ai] && t > pathfinders[ai]->cost.lb(s.data->ctx())) {
+          fprintf(stderr, "%% Agent %d crosses target %d [%d -> %d]\n", aj, ai, pathfinders[ai]->cost.lb(s.data->ctx()), t);
+        } else if(path_it[aj] == path_en[aj] && t > pathfinders[aj]->cost.lb(s.data->ctx())) {
+          fprintf(stderr, "%% Agent %d crosses target %d [%d -> %d]\n", ai, aj, pathfinders[aj]->cost.lb(s.data->ctx()), t);
+        }
 #ifdef MAPF_USE_TARGETS
-        if((path_it[ai] == path_en[ai] && t > pathfinders[ai]->cost.ub(s.data->ctx()))  ||
-           (path_it[aj] == path_en[aj] && t > pathfinders[aj]->cost.ub(s.data->ctx()))) {
+        if((path_it[ai] == path_en[ai] && t > pathfinders[ai]->cost.lb(s.data->ctx()))  ||
+           (path_it[aj] == path_en[aj] && t > pathfinders[aj]->cost.lb(s.data->ctx()))) {
           if(path_it[ai] != path_en[ai])
             std::swap(ai, aj);
-          assert(path_it[ai] == path_en[ai]);
-          fprintf(stderr, "%% Target conflict %d via %d\n", aj, ai);
+          assert(path_it[ai] == path_en[ai] && t > pathfinders[ai]->cost.lb(s.data->ctx()));
+          //pathfinders[aj]->debug_print_path(coord.get_path(aj));
           new_conflicts.push(conflict::barrier(t, ai, aj,
                                               std::make_pair(0, 0),
                                                pf::M_WAIT, pf::M_WAIT,
@@ -586,7 +595,6 @@ bool MAPF_Solver::checkForConflicts(void) {
           goto conflict_handled;
         }
 #endif
-        
         // Pretty ugly case checks.
         if(path_it[ai] == coord.get_path(ai).begin() || path_it[aj] == coord.get_path(aj).begin())
           goto conflict_is_not_rectangle;
@@ -1093,6 +1101,8 @@ bool MAPF_Solver::addConflict(void) {
         while(s.level() > 0 && at.lb(s.data->ctx()))
           s.backtrack();
         pathfinders[a1]->register_obstacle(at, k.timestamp, k.move, k.loc);
+        if(k.loc == pathfinders[a1]->goal_pos)
+          add_clause(s.data, ~at, pathfinders[a1]->cost > k.timestamp);
         c.attached.insert(a1);
       }
       if(!c.attached.elem(a2)) {
@@ -1100,6 +1110,8 @@ bool MAPF_Solver::addConflict(void) {
         while(s.level() > 0 && at.lb(s.data->ctx()))
           s.backtrack();
         pathfinders[a2]->register_obstacle(at, k.timestamp, k.move, k.loc);
+        if(k.loc == pathfinders[a2]->goal_pos)
+          add_clause(s.data, ~at, pathfinders[a2]->cost > k.timestamp);
         c.attached.insert(a2);
       }
       // FIXME: Abstract properly
@@ -1240,6 +1252,161 @@ bool MAPF_MinCost(MAPF_Solver& mapf) {
       assumps.push(geas::le_atom(p.p, p.lb));
   }
   // assert(!mapf.checkForConflicts());
+  return true;
+}
+
+struct subproblem {
+  subproblem(geas::intvar _cost, int _lb)
+    : cost(_cost), lb(_lb) { }
+  geas::intvar cost;
+  int lb;
+  vec<coordinator::agent_cell> agents;
+};
+
+struct pending {
+  pending(vec<int>& _core_members, int _lb)
+    : core_members(_core_members), lb(_lb) { }
+  vec<int> core_members;
+  int lb;
+};
+
+struct opt_state {
+  std::unordered_map<geas::pid_t, int> cost_map;
+
+  vec<subproblem> subproblems;
+  vec<pending> delayed;
+};
+
+int process_subproblem(MAPF_Solver& m, opt_state& state, const vec<int>& core_members, int lb_0) {
+  int lb = lb_0;
+  geas::intvar cost = m.s.new_intvar(lb, m.cost_ub);
+  m.coord.clear_active();
+
+  m.s.restart();
+  vec<int> cs;
+  vec<geas::intvar> xs;
+  cs.push(-1);
+  xs.push(cost);
+  for(int sub_idx : core_members) {
+    const subproblem& sub(state.subproblems[sub_idx]);
+    cs.push(1);
+    xs.push(sub.cost);
+    m.coord.make_active(sub.agents.begin(), sub.agents.end());
+  }
+  geas::linear_le(m.s.data, cs, xs, 0);
+
+  vec<geas::patom_t> assumps;
+  vec<geas::patom_t> core;
+  assumps.push(cost <= lb);
+  while(!m.buildPlan(assumps)) {
+    core.clear();
+    m.s.get_conflict(core);
+    m.s.clear_assumptions();
+    // Globally infeasible (somehow, probably should be unreachable).
+    assert(core.size() == 1);
+    assert(core[0].pid == cost.p);
+
+    lb = cost.lb_of_pval(core[0].val);
+    assumps[0] = cost <= lb;
+  }
+
+  int idx = state.subproblems.size();
+  state.subproblems.push(subproblem(cost, lb));
+  m.coord.dump_active(state.subproblems.last().agents);
+  state.cost_map.insert(std::make_pair(cost.p, idx));
+  return lb - lb_0;
+}
+
+int process_delayed(MAPF_Solver& m, opt_state& state) {
+  int delta = 0;
+  for(const pending& p : state.delayed)
+    delta += process_subproblem(m, state, p.core_members, p.lb);
+  state.delayed.clear();
+  return delta;
+}
+
+void fill_assumps(MAPF_Solver& m, const opt_state& state, vec<geas::patom_t>& assumps) {
+  assumps.clear();
+  for(auto p : state.cost_map) {
+    const subproblem& sub(state.subproblems[p.second]);
+    m.coord.make_active(sub.agents.begin(), sub.agents.end());
+    assumps.push(sub.cost <= sub.lb);
+  }
+}
+
+int process_core(MAPF_Solver& m, opt_state& state, const vec<geas::patom_t>& core) {
+  assert(core.size() > 0);
+  if(core.size() == 1) {
+    int s_id = state.cost_map.find(core[0].pid)->second;
+    int s_lb = state.subproblems[s_id].cost.lb_of_pval(core[0].val);
+    int delta = state.subproblems[s_id].lb - s_lb;
+    state.subproblems[s_id].lb = s_lb;
+    return delta;
+  } else {
+    int lb = 0;
+    int delta = INT_MAX;
+    vec<int> subproblems;
+    for(geas::patom_t at : core) {
+      auto it = state.cost_map.find(at.pid);
+      int s_id = it->second;
+      state.cost_map.erase(it);
+      const subproblem& sub(state.subproblems[s_id]);
+      m.coord.rem_active(sub.agents.begin(), sub.agents.end());
+
+      int s_lb = sub.cost.lb_of_pval(at.val);
+      lb += sub.lb;
+      delta = std::min(delta, s_lb - sub.lb);
+      subproblems.push(s_id);
+    }
+    state.delayed.push(pending(subproblems, lb + delta));
+    return delta;
+  }
+}
+
+bool MAPF_MinCost_REC(MAPF_Solver& mapf) {
+  int lb = 0;
+  opt_state state;
+  const auto& ctx = mapf.s.data->ctx();
+  for(Agent_PF* p : mapf.pathfinders) {
+    int p_lb = p->cost.lb(ctx);
+    lb += p_lb;
+    int s_id = state.subproblems.size();
+    state.subproblems.push(subproblem(p->cost, p_lb));
+    state.subproblems[s_id].agents.push(coordinator::agent_cell(p->agent_id));
+    state.cost_map.insert(std::make_pair(p->cost.p, s_id));
+  }
+
+  mapf.cost_lb = lb;
+#ifdef DEBUG_UC
+  fprintf(stderr, "%%%% Initial bound: %d\n", lb);
+#endif
+
+  vec<geas::patom_t> assumps;
+  vec<geas::patom_t> core;
+
+ restart_iter:
+  fill_assumps(mapf, state, assumps);
+  if(!mapf.buildPlan(assumps)) {
+    // At least one core.
+    do {
+      core.clear();
+      mapf.s.get_conflict(core);
+      lb += process_core(mapf, state, core);
+#ifdef DEBUG_UC
+      fprintf(stderr, "%%%% Found core of size (%d), current lower bound %d\n", core.size(), lb);
+#endif
+      mapf.cost_lb = lb;
+      mapf.s.clear_assumptions();
+      fill_assumps(mapf, state, assumps);
+    } while(!mapf.buildPlan(assumps));
+    mapf.s.restart();
+    lb += process_delayed(mapf, state);
+    mapf.cost_lb = lb;
+#ifdef DEBUG_UC
+    fprintf(stderr, "%%%% Tightened cores, current lower bound %d\n", lb);
+#endif
+    goto restart_iter;
+  }
   return true;
 }
 

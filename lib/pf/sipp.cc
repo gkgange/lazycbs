@@ -7,8 +7,13 @@ namespace mapf {
 // Find the index just after the last Vertex blockage.
 int find_goal_index(sipp_loc& loc) {
   int idx = loc.size()-1;
-  while(idx > 0 && loc[idx-1].may_wait())
+  if(loc[idx].constraints & pf::C_DELAY)
+    return idx;
+  while(idx > 0 && !(loc[idx-1].constraints & pf::C_VERT)) {
+    if(loc[idx-1].constraints & pf::C_DELAY)
+      return idx-1;
     --idx;
+  }
   return idx;
 }
 
@@ -41,7 +46,7 @@ bool sipp_ctx::release(pf::Move m, unsigned loc, int time) {
   if(it->constraints)
     return true;
 
-  // Maybe delete this node.
+  // Maybe delete this node?
   return false;
 }
 
@@ -154,7 +159,10 @@ int sipp_pathfinder::search(int origin, int goal, sipp_ctx& ctx, int* heur,
     }
 
     int t = curr_itv.next_ex + 1;
-    int max_ex = 1 + std::min(curr_loc[curr.idx+1].start, curr_loc.Tend);
+    int ex_idx = curr.idx+1;
+    //while(curr_loc[ex_idx].constraints & pf::C_DELAY)
+    //  ++ex_idx;
+    int max_ex = 1 + std::min(curr_loc[ex_idx].start, curr_loc.Tend);
     int next_ex = max_ex;
     unsigned char second = curr_itv.second;
     for(auto p : nav.successors(curr.loc)) {
@@ -203,7 +211,9 @@ int sipp_pathfinder::search(int origin, int goal, sipp_ctx& ctx, int* heur,
       unsigned char w_second = std::min(127, second + reserved.score(pf::M_WAIT, curr.loc, wait.start));
       if(wait.start < curr_loc.Tend
          && (wait.start < wait.reach || w_second < wait.second)
-         && wait.may_wait()) {
+         //&& wait.may_wait()
+         && ! (wait.constraints & pf::C_VERT)
+         ) {
         IntId wait_id(curr.loc, curr.idx+1);
         wait.pred = pf::M_WAIT;
         wait.reach = wait.next_ex = wait.start;
@@ -272,11 +282,16 @@ void sipp_explainer::explain(int origin, int goal, int Tub, sipp_ctx& state,
     // We have to process predecessors of each interval separately
     // anyway, so we'll just process one interval at a time.
     // TODO: Deal with r_heur.
+    if(curr_loc.Tend <= curr_itv.start)
+      continue;
+
     if(! (curr_itv.constraints & pf::C_VERT) ) {
       int t_start = curr_itv.start;
-      int t_reach = std::min(curr_itv.next_ex, curr_loc.Tend-1);
+      // int t_reach = std::min(curr_itv.next_ex, curr_loc.Tend-1);
+      int t_reach = std::min(curr_loc.Tend-1, curr_itv.next_ex);
 
-      if(curr.idx > 0 && curr_loc[curr.idx-1].next_ex < t_start-1) {
+      if(curr.idx > 0 && !(curr_itv.constraints & pf::C_DELAY)
+         && curr_loc[curr.idx-1].next_ex < t_start-1) {
         curr_loc[curr.idx-1].next_ex = t_start-1;
         mark_heap.insert_or_decrease(IntId(curr.loc, curr.idx-1));
       }
