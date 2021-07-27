@@ -190,11 +190,15 @@ public:
 
   sipp_explainer(const navigation& _nav)
     : nav(_nav), ctx(nullptr), timestamp(0)
-    , mark_heap(mark_env()), collect_heap(collect_env()) { }
+    , mark_heap(mark_env()), collect_heap(collect_env())
+    , Tfeas(new int[nav.size()])
+  { }
 
   inline sipp_loc& get(unsigned loc) const {
-    if(timestamp != ctx[loc].timestamp)
+    if(timestamp != ctx[loc].timestamp) {
       ctx[loc].reset(timestamp);
+      Tfeas[loc] = INT_MAX;
+    }
     return ctx[loc];
   }
 
@@ -204,6 +208,8 @@ public:
   const navigation& nav;
   
   sipp_loc* ctx;
+  int* Tfeas;
+
   int timestamp;
   IntrusiveHeap<IntId, mark_env> mark_heap;
   IntrusiveHeap<IntId, collect_env> collect_heap;

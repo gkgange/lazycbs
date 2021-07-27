@@ -7,7 +7,7 @@
 
 #define DEBUG_UC
 // #define MAPF_NO_RECTANGLES
-//#define MAPF_USE_TARGETS
+#define MAPF_USE_TARGETS
 
 namespace mapf {
 

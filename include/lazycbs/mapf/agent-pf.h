@@ -174,6 +174,8 @@ class Agent_PF : public propagator, public prop_inst<Agent_PF> {
       if(c.move == sipp_explainer::M_LOCK) {
         // Target constraint
         int ti = target_map.find(c.loc)->second;
+        if(c.time > targets[ti].threshold)
+          targets[ti].threshold = c.time;
         EX_PUSH(expl, targets[ti].time > c.time);
       } else {
         geas::patom_t at = (*reasons[c.loc].find(c.time)).value[(pf::Move) c.move];
@@ -187,6 +189,7 @@ class Agent_PF : public propagator, public prop_inst<Agent_PF> {
     // Temporarily reset the obs_stack.
     set_stack_to(tl);
     expl_length_bound(cost.lb_of_pval(p)-1, expl);
+    /*
     vec<sipp_explainer::cst> ex_csts;
     // Temporarily reset the obs_stack.
     set_stack_to(tl);
@@ -202,6 +205,7 @@ class Agent_PF : public propagator, public prop_inst<Agent_PF> {
         EX_PUSH(expl, ~at);
       }
     }
+    */
 #else
     obstacle_atoms(tl, expl);
 #endif
@@ -467,7 +471,7 @@ public:
     , goal_min(0)
     {
     cost.attach(E_UB, watch<&P::wake_cost>(0, Wt_IDEM));
-    //    cost.attach(E_LB, watch<&P::wake_cost_lb>(0, Wt_IDEM));
+    //cost.attach(E_LB, watch<&P::wake_cost_lb>(0, Wt_IDEM));
     int pathC = coord.sipp_pf.search(start_pos, goal_pos,
                                      sctx, f_heur, coord.res_table.reserved);
     if(pathC == INT_MAX)
@@ -576,13 +580,11 @@ public:
     if(goal_min > 0)
       fprintf(stderr, "%% Agent %d arrived %d, earliest %d.\n", agent_id, pathC, goal_min);
     */
-    /*
     if(pathC < c_lb) {
       fprintf(stderr, "%% Uh oh: c_lb(%d), pathC(%d).\n", c_lb, pathC);
       coord.sipp_pf.path.push(pf::Step(c_lb, pf::M_WAIT));
       pathC = c_lb;
     }
-    */
     if(pathC == INT_MAX) {
       coord.restore_agent(agent_id);
 

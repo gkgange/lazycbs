@@ -281,7 +281,8 @@ void sipp_explainer::explain(int origin, int goal, int Tub, sipp_ctx& state,
     sipp_interval&  curr_itv(curr_loc[curr.idx]);
     // We have to process predecessors of each interval separately
     // anyway, so we'll just process one interval at a time.
-    // TODO: Deal with r_heur.
+
+    // FIXME: Update to deal with Tfeas.
     if(curr_loc.Tend <= curr_itv.start)
       continue;
 
@@ -305,6 +306,14 @@ void sipp_explainer::explain(int origin, int goal, int Tub, sipp_ctx& state,
         int pred_reach = t_reach-1;
         if(Tmin > pred_reach)
           continue;
+
+        // Check if the target is relevant.
+        if(pred_loc.Tend <= pred_reach) {
+          Tfeas[p.second] = std::min(Tfeas[p.second], std::max(Tmin, pred_loc.Tend));
+          if(pred_loc.Tend <= Tmin)
+            continue;
+          pred_reach = pred_loc.Tend-1;
+        }
 
         auto pred_it = pred_loc.reach(pred_reach);
         while(Tmin < pred_it->start) {
@@ -337,22 +346,31 @@ void sipp_explainer::explain(int origin, int goal, int Tub, sipp_ctx& state,
 
     sipp_loc& curr_loc(state[curr.loc]);
     int t_start = curr_loc[curr.idx].reach;
-    int t_end = t_start-1;
+    int t_end = t_start;
     int Tmax = Tub - heur[curr.loc];
+    int Tcut = Tfeas[curr.loc];
     auto curr_it(curr_loc.begin() + curr.idx);
     auto curr_en(curr_loc.end());
     // Are we already infeasible?
     if(t_start + heur[curr.loc] > Tub)
       continue;
 
+    if(Tcut <= t_start) {
+      out_expl.push(cst(curr.loc, t_start, M_LOCK));
+      continue;
+    }
+
     int idx = curr.idx;
     while(curr_it != curr_en) {
       if(t_start <= curr_it->next_ex) {
         // We would have a feasible transition here, so either a
         // vertex constraint or target constraint is necessary.
-        if(curr_loc.Tend <= t_start) {
+        if(curr_loc.Tend <= curr_it->reach) {
+          // CHECK: If a target applies, we should probably have
+          // handled the case earlier.
           // Prefer target constraints.
-          out_expl.push(cst(curr.loc, curr_it->next_ex, M_LOCK));
+          assert(0);
+          out_expl.push(cst(curr.loc, curr_it->reach, M_LOCK));
         } else {
           assert(curr_it->constraints & pf::C_VERT);
           out_expl.push(cst(curr.loc, curr_it->start, pf::M_WAIT));
@@ -361,14 +379,21 @@ void sipp_explainer::explain(int origin, int goal, int Tub, sipp_ctx& state,
       }
       ++curr_it;
       ++idx;
+
+      if(Tcut <= curr_it->start) {
+        out_expl.push(cst(curr.loc, Tcut, M_LOCK));
+        t_end = Tcut;
+        break;
+      }
+
       curr_it->reach = curr_it->start;
-      t_end = curr_it->start-1;
+      t_end = curr_it->start;
       // Every [curr] interval we hit is at its minimal
       // time, so process it now.
       if(collect_heap.in_heap(IntId(curr.loc, idx)))
         collect_heap.remove(IntId(curr.loc, idx));
     }
-    if(t_end < t_start)
+    if(t_end <= t_start)
       continue;
     // We've identified the feasible range for curr, now
     // check the reachable successors.
@@ -376,8 +401,11 @@ void sipp_explainer::explain(int origin, int goal, int Tub, sipp_ctx& state,
       sipp_loc& succ_loc(get(p.second));
       int t_succ = t_start+1;
       auto succ_it(succ_loc.reach(t_succ));
-      while(succ_it->start < t_end) {
-        if(t_succ < succ_it->reach) {
+      auto succ_en(succ_loc.end());
+      while(succ_it != succ_en) {
+        if(t_succ >= t_end+1)
+          break;
+        if(t_succ <= succ_it->reach) {
           // We only want to take an edge conflict if we can't
           // handle it with a vertex or target constraint.
           if(t_succ <= succ_it->next_ex
