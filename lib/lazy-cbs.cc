@@ -1,7 +1,5 @@
-#include "map_loader.h"
-#include "agents_loader.h"
-#include "egraph_reader.h"
 #include <lazycbs/mapf/mapf-solver.h>
+#include <lazycbs/mapf/instance.h>
 
 #include <string>
 #include <cstring>
@@ -15,12 +13,7 @@
 #include <cmath>
 #include <utility>
 #include <boost/program_options.hpp>
-#include<boost/tokenizer.hpp>
 
-
-#ifndef EXTRA_PEN
-#define EXTRA_PEN 0  /* Off by default. */
-#endif
 
 /* This flag controls early solver termination */
 volatile static sig_atomic_t terminated = 0;
@@ -41,54 +34,15 @@ void clear_handlers(void) {
 using namespace boost::program_options;
 using namespace std;
 
-AgentsLoader read_movingai(std::string fname, int upto) {
-  AgentsLoader al;
-
-  string line;
-  ifstream myfile(fname.c_str());
-  
-  if (myfile.is_open()) {
-    boost::char_separator<char> sep("\t");
-    /*
-    tokenizer< char_separator<char> > tok(line, sep);
-    tokenizer< char_separator<char> >::iterator beg=tok.begin();
-    */
-    std::getline(myfile,line); // Ditch the first line
-    for (int i=0; i < upto; i++) {
-      std::getline(myfile, line);
-      boost::tokenizer< boost::char_separator<char> > col_tok(line, sep);
-      boost::tokenizer< boost::char_separator<char> >::iterator c_beg=col_tok.begin();
-      // EX: 64	brc202d.map	530	481	446	403	444	182	259.12489166
-      ++c_beg; // Length
-      ++c_beg; // Map
-      ++c_beg; // Rows
-      ++c_beg; // Cols
-      
-      // The maps have been padded, so 'real' cells are still indexed from one.
-      int c_s = atoi((*c_beg).c_str())+1; ++c_beg;
-      int r_s = atoi((*c_beg).c_str())+1; ++c_beg;
-      int c_e = atoi((*c_beg).c_str())+1; ++c_beg;
-      int r_e = atoi((*c_beg).c_str())+1; ++c_beg;
-
-      al.addAgent(r_s, c_s, r_e, c_e);
-    }
-    myfile.close();
-  }
-  else
-    cerr << "Agents file not found." << std::endl;
-  return al;
-}
 
 int main(int argc, char** argv) {
 
   // Reading arguments ----------------------------------------------------------------
-  string map_fname, agents_fname, hwy_fname, search_method, results_fname;
+  string map_fname, agents_fname;
   /* double w_hwy = 1.0 , w_focal = 1.0 */;
-  int rrr_it, time_limit;  // random restarts iterations number
+  int time_limit;  // random restarts iterations number
   int agents_upto;
-  bool tweakGVal, rand_succ_gen;
   bool opt_makespan;
-  bool opt_anytime;
   try {
     options_description desc("Options");
     desc.add_options() 
@@ -96,16 +50,7 @@ int main(int argc, char** argv) {
       ("map", value<string>(&map_fname)->required(), "Map filename")
       ("agents", value<string>(&agents_fname)->required(), "Agents filename")
       ("upto", value<int>(&agents_upto)->default_value(INT_MAX), "Number of agents to read (expects movingai format).")
-      // ("highway", value<string>(&hwy_fname)->required(), "Highway filename or CRISSCROSS / GM / HONG")
-      //("focal_w", value<double>(&w_focal)->default_value(1), "Focal weight")
-      //("highway_w", value<double>(&w_hwy)->default_value(1), "Highway weight")
-      ("search", value<string>(&search_method)->default_value("ECBS"), "Search method (ECBS or iECBS. Default is ECBS)")
       ("makespan", value<bool>(&opt_makespan)->default_value(false), "Optimize makespan, rather than cost (Default false)")
-      ("anytime", value<bool>(&opt_anytime)->default_value(false), "Use anytime cost optimization.")
-      ("tweakGVal", value<bool>(&tweakGVal)->default_value(false), "Change the cost structure or not (deprecated)")
-      ("rand_succ_gen", value<bool>(&rand_succ_gen)->default_value(false), "Random order of successors generation (in the low-level search)")
-      ("RRR", value<int>(&rrr_it)->default_value(0), "Random Restart #iterations (Default is 0, which runs once from root node for agentse ordered sequentially)")
-      ("export_results", value<string>(&results_fname)->default_value("NONE"), "Results filename")
       ("time_limit",value<int>(&time_limit)->default_value(300), "Time limit cutoff [seconds]")
       ;
 
@@ -137,10 +82,12 @@ int main(int argc, char** argv) {
   set_handlers();
   // read the map file and construct its two-dim array
 
-  MapLoader ml = MapLoader(map_fname);
+  mapf::Map ml(mapf::load_movingai_map(map_fname));
   
   // read agents' start and goal locations
-  AgentsLoader al(agents_upto < INT_MAX ? read_movingai(agents_fname, agents_upto) : AgentsLoader(agents_fname));
+  mapf::Agents al(agents_upto < INT_MAX
+                ? mapf::load_movingai_scenario(agents_fname, agents_upto)
+                : mapf::load_ecbs_scenario(agents_fname));
 
   mapf::MAPF_Solver mapf(ml, al, 1e8);
 
@@ -159,7 +106,7 @@ int main(int argc, char** argv) {
   if(okay)
     mapf.printPaths(stdout);
 
-  fprintf(stderr, "lazy-cbs ; %s ; %s ; %d ; %s ; %.02lf ; ", map_fname.c_str(), agents_fname.c_str(), al.num_of_agents,
+  fprintf(stderr, "lazy-cbs ; %s ; %s ; %d ; %s ; %.02lf ; ", map_fname.c_str(), agents_fname.c_str(), al.size(),
     okay ? "done" : "timeout", 1000.0 * (std::clock() - start) / CLOCKS_PER_SEC);
   mapf.printStats(stderr);
   fprintf(stderr, "\n");

@@ -2,7 +2,6 @@ CXX       = g++
 PROF      = 
 MAPF      = mapf
 GEAS_ROOT = ../geas
-ECBS_ROOT = ../ECBS_PF
 CXXFLAGS    = -I include -Wall -Wno-deprecated
 CXXFLAGS += --std=c++11
 CXXFLAGS += -D __STDC_LIMIT_MACROS -D __STDC_FORMAT_MACROS
@@ -13,12 +12,11 @@ LFLAGS   += $(PROF)
 PROF_FLAGS = 
 #PROF_FLAGS = -pg
 
-## ECBS flags
-CXXFLAGS += -I $(ECBS_ROOT) -Wall -I /usr/include/boost/ -I /usr/local/lib -lboost_program_options -lboost_graph
+## Boost flags
+CXXFLAGS += -Wall -I /usr/include/boost/ -I /usr/local/lib -lboost_program_options
 ## geas flags
 CXXFLAGS += -I $(GEAS_ROOT)/include
-#ECBS_LFLAGS = -L $(ECBS_ROOT) -L . -lboost_program_options -lboost_graph -lgeas -lecbs
-LFLAGS += -L $(ECBS_ROOT) -L $(GEAS_ROOT) -L . -lboost_program_options -lboost_graph -lgeas -lecbs
+LFLAGS += -L $(GEAS_ROOT) -L . -lboost_program_options -lboost_graph -lgeas
 LFLAGS += $(PROF_FLAGS)
 
 #COPTIMIZE = -O3 -march=native -ffast-math -funroll-loops # -freorder-blocks-and-partition
@@ -45,7 +43,6 @@ TEST_DEPS     = $(addsuffix .d, $(TESTS))
 
 TARGETS = lazy-cbs $(TESTS)
 LIBGEAS = libgeas.a
-LIBECBS = libecbs.a
 all: $(TARGETS)
 
 ## Dependencies
@@ -74,11 +71,9 @@ $(TARGETS):
 #	cp $(GEAS_ROOT)/libgeas.a libgeas.a
 
 
-#libecbs.a : $(ECBS_ROOT)/libecbs.a
-#	cp $(ECBS_ROOT)/libecbs.a libecbs.a
 
-lazy-cbs : lib/lazy-cbs.o $(MAPF_OBJS) $(LIB) $(ECBS)
-#	@$(CXX) $^ $(LFLAGS) $(ECBS_LFLAGS) -o $@
+lazy-cbs : lib/lazy-cbs.o $(MAPF_OBJS) $(LIB)
+#	@$(CXX) $^ $(LFLAGS) -o $@
   
 ## Clean rule
 clean:

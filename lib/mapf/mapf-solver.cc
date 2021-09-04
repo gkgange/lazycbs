@@ -1,13 +1,13 @@
+#include <cmath>
 #include <geas/constraints/builtins.h>
 
 #include <lazycbs/mapf/mapf-solver.h>
+#include <lazycbs/mapf/instance.h>
 #include <lazycbs/pf/pf.hpp>
 
-#include "compute_heuristic.h"
-
-#define DEBUG_UC
+// #define DEBUG_UC
 // #define MAPF_NO_RECTANGLES
-#define MAPF_USE_TARGETS
+// #define MAPF_USE_TARGETS
 
 namespace mapf {
 
@@ -17,19 +17,19 @@ static std::pair<int, bool*> mapf_get_res_table(MAPF_Solver* m, int excl) {
 }
 */
 
-static int map_size(const MapLoader& ml) { return ml.rows  * ml.cols; }
+static int map_size(const Map& ml) { return ml.rows  * ml.cols; }
 
-MAPF_Solver::MAPF_Solver(const MapLoader& ml, const AgentsLoader& al, int UB)
+MAPF_Solver::MAPF_Solver(const Map& ml, const Agents& al, int UB)
   :
   /* ml(&_ml), al(&_al), egr(&_egr), map_size(ml->rows * ml->cols) */
   /* reservation_table(map_size, false), */ cmap(map_size(ml), -1), nmap(map_size(ml), -1)
-  , agent_set(al.num_of_agents)
+  , agent_set(al.size())
   , cost_ub(UB)
   , HL_conflicts(0)
   , nav(navigation::of_obstacle_array(ml.cols, ml.rows, ml.get_map(), nav_coords))
   , row_locs(ml.rows), col_locs(ml.cols)
   , coord(s, nav) {
-    int num_of_agents = al.num_of_agents;
+  int num_of_agents = al.size();
     // int map_size = ml->rows*ml->cols;
     cost_lb = 0;
 
@@ -41,8 +41,8 @@ MAPF_Solver::MAPF_Solver(const MapLoader& ml, const AgentsLoader& al, int UB)
     }
 
     for(int ai = 0; ai < num_of_agents; ++ai) {
-      int init_loc = _nav::find_coord(nav_coords, al.initial_locations[ai].first, al.initial_locations[ai].second);
-      int goal_loc = _nav::find_coord(nav_coords, al.goal_locations[ai].first, al.goal_locations[ai].second);
+      int init_loc = _nav::find_coord(nav_coords, al[ai].origin.first, al[ai].origin.second);
+      int goal_loc = _nav::find_coord(nav_coords, al[ai].goal.first, al[ai].goal.second);
 
       geas::intvar cv(s.new_intvar(0, UB));
       Agent_PF* pf(new Agent_PF(s.data, coord, cv, init_loc, goal_loc));

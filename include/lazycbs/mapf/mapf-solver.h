@@ -1,8 +1,8 @@
 #ifndef GEAS_MAPF__SOLVER_H
 #define GEAS_MAPF__SOLVER_H
 // ECBS includes
-#include "map_loader.h"
-#include "agents_loader.h"
+//#include "map_loader.h"
+//#include "agents_loader.h"
 
 // geas includes
 #include <geas/solver/solver.h>
@@ -11,6 +11,7 @@
 #include <lazycbs/pf/pf.hh>
 #include <lazycbs/pf/sipp.hh>
 
+#include <lazycbs/mapf/instance.h>
 #include <lazycbs/mapf/coordinator.h>
 #include <lazycbs/mapf/agent-pf.h>
 
@@ -151,7 +152,7 @@ class MAPF_Solver {
     btset::bitset attached; // Which agents are already attached?
   };
 
-  MAPF_Solver(const MapLoader& ml, const AgentsLoader& al, int cost_ub);
+  MAPF_Solver(const Map& ml, const Agents& al, int cost_ub);
 
   // Problem information
   /*
