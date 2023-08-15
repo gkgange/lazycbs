@@ -1,7 +1,7 @@
 # Lazy CBS: A multi-agent pathfinding solver, using a lazy clause generation backend
 
 ## Dependencies:
- + [geas](https://bitbucket.org/gkgange/geas)
+ + [geas](https://github.com/gkgange/geas)
  
      A lazy clause generation-based constraint programming solver.
      For Lazy CBS, only the C++ library and headers are necessary;
